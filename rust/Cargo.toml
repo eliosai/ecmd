@@ -3,7 +3,7 @@ resolver = "3"
 members = ["core", "derive", "tests"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors = ["Joshua Smotritsky"]
 license = "MIT"
@@ -13,7 +13,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 thiserror = "2.0"
 async-trait = "0.1"
-ecmd-derive = { version = "0.4", path = "derive" }
+ecmd-derive = { version = "0.4.1", path = "derive" }
 pretty_assertions = "1"
 compact_str = { version = "0.9", features = ["serde"] }
 

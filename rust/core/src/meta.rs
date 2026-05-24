@@ -38,6 +38,8 @@ pub struct CommandDef {
     pub positionals: &'static [PositionalDef],
     /// Whether a rest-args (`Operands`) field exists.
     pub has_rest: bool,
+    /// Generic key-value tags for downstream consumers.
+    pub tags: &'static [(&'static str, &'static str)],
 }
 
 /// Metadata for a positional argument slot.
@@ -149,6 +151,7 @@ mod tests {
                 desc: "",
             }],
             has_rest: false,
+            tags: &[],
         };
         assert_eq!(DEF.name, "test");
         assert!(DEF.positionals.first().unwrap().required);

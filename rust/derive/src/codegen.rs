@@ -325,6 +325,8 @@ fn gen_meta(cmd: &CommandAttrs, about: &str, fields: &[ClassifiedField<'_>]) -> 
     let flag_metas = gen_flag_metas(fields);
     let pos_metas = gen_positional_metas(fields);
     let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
+    let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
+    let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
     quote! {
         ::ecmd::meta::CommandDef {
             name: #name,
@@ -334,6 +336,7 @@ fn gen_meta(cmd: &CommandAttrs, about: &str, fields: &[ClassifiedField<'_>]) -> 
             flags: &[#flag_metas],
             positionals: &[#pos_metas],
             has_rest: #has_rest,
+            tags: &[#( (#tag_keys, #tag_vals) ),*],
         }
     }
 }

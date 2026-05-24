@@ -10,6 +10,7 @@ pub struct CommandAttrs {
     pub style: String,
     pub lenient: bool,
     pub noop: String,
+    pub tags: Vec<(String, String)>,
 }
 
 impl CommandAttrs {
@@ -18,6 +19,7 @@ impl CommandAttrs {
         let mut style = "posix".to_owned();
         let mut lenient = false;
         let mut noop = String::new();
+        let mut tags = Vec::new();
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("command")) {
             attr.parse_nested_meta(|meta| {
@@ -29,6 +31,18 @@ impl CommandAttrs {
                     lenient = true;
                 } else if meta.path.is_ident("noop") {
                     noop = parse_lit_str(&meta)?;
+                } else if meta.path.is_ident("tag") {
+                    let content;
+                    syn::parenthesized!(content in meta.input);
+                    let key: Ident = content.parse()?;
+                    let value = if content.peek(Token![=]) {
+                        content.parse::<Token![=]>()?;
+                        let lit: syn::LitStr = content.parse()?;
+                        lit.value()
+                    } else {
+                        String::new()
+                    };
+                    tags.push((key.to_string(), value));
                 } else {
                     return Err(meta.error("unknown command attribute"));
                 }
@@ -42,7 +56,7 @@ impl CommandAttrs {
             return Err(syn::Error::new(span, "missing #[command(name = \"...\")]"));
         }
 
-        Ok(Self { name, style, lenient, noop })
+        Ok(Self { name, style, lenient, noop, tags })
     }
 }
 

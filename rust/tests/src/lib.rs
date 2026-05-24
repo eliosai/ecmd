@@ -410,4 +410,31 @@ mod tests {
         let n_flag = flags.iter().find(|f| f.ch == 'n').unwrap();
         assert_eq!(n_flag.value_name, "NCHARS");
     }
+
+    // ── Tags ───────────────────────────────────────────────────────
+
+    /// Export variables.
+    #[derive(Command)]
+    #[command(name = "export", tag(kind = "special"), tag(special), tag(assignment))]
+    struct Export {
+        #[flag(short = 'n')]
+        unexport: bool,
+        #[flag(short = 'p')]
+        print: bool,
+        names: Operands,
+    }
+
+    #[test]
+    fn tags_present() {
+        let def = Export::def();
+        assert_eq!(def.tags.len(), 3);
+        assert_eq!(def.tags[0], ("kind", "special"));
+        assert_eq!(def.tags[1], ("special", ""));
+        assert_eq!(def.tags[2], ("assignment", ""));
+    }
+
+    #[test]
+    fn tags_empty_when_none() {
+        assert!(MyCd::def().tags.is_empty());
+    }
 }
