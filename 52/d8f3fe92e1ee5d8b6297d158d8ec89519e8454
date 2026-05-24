@@ -1,0 +1,39 @@
+rust/derive/src/codegen.rs
+  s_3d0ce82d03077f::t_251752f1825fe6 17,23
+  s_3d0ce82d03077f::t_12379f4efd3232 29
+  s_3d0ce82d03077f::t_fe25e9f69bafd1 61-62
+  s_3d0ce82d03077f::t_433c0d79d084e7 9
+  s_3d0ce82d03077f::t_c9ec9b16ce9017 313,331,345-346,348,362,364
+  s_3d0ce82d03077f::t_22b5e8ba6db989 183-184,186,193
+  s_3d0ce82d03077f::t_572dfc404d6a06 444-454
+rust/core/src/parse.rs
+  s_3d0ce82d03077f::t_91ce8981c3520b 505
+  s_3d0ce82d03077f::t_c7aff39f33580a 489
+  s_3d0ce82d03077f::t_c15885f0434460 284,288,292,296
+  s_3d0ce82d03077f::t_a0cc840354507b 497
+  s_3d0ce82d03077f::t_13045a310c76ed 48-51
+rust/tests/src/lib.rs
+  s_3d0ce82d03077f::t_12d0863717f488 324-412
+rust/derive/src/attrs.rs
+  s_3d0ce82d03077f::t_940b2373c73730 53,64,74-75,86,90-105
+rust/core/src/meta.rs
+  s_3d0ce82d03077f::t_75f5228765f75b 55-128
+  s_3d0ce82d03077f::t_9c86d35da9af2f 142,149
+  s_3d0ce82d03077f::t_2a3f550be6528c 29-30,51-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "52d8f3fe92e1ee5d8b6297d158d8ec89519e8454",
+  "prompts": {},
+  "sessions": {
+    "s_3d0ce82d03077f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e08b8646-19c8-4246-99fb-d4907d5c83c0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
