@@ -1,30 +1,17 @@
 # ecmd
 
-Argument parser for Rust. Type-driven, zero dependencies, strict.
+[![crates.io](https://img.shields.io/crates/v/ecmd.svg)](https://crates.io/crates/ecmd)
+[![docs.rs](https://docs.rs/ecmd/badge.svg)](https://docs.rs/ecmd)
+[![MIT](https://img.shields.io/crates/l/ecmd.svg)](LICENSE)
 
-Field types determine parsing behavior. `bool` is a flag, `Option<String>` takes a value, `Operands` collects the rest. A derive macro generates the parser from your struct definition.
-
-## Usage
+Type-driven argument parser for Rust. Field types determine parsing behavior.
 
 ```toml
 [dependencies]
 ecmd = "0.2"
 ```
 
-```rust
-use ecmd::parse::{scan, FlagDef, FlagKind, OnUnknown};
-
-let flags = &[
-    FlagDef { ch: 'v', kind: FlagKind::Bool, clears: &[] },
-    FlagDef { ch: 'o', kind: FlagKind::Value, clears: &[] },
-];
-
-let result = scan(&["-v", "-o", "out.txt", "input.rs"], flags, OnUnknown::Reject).unwrap();
-// result.flags = [Bool('v'), Value('o', "out.txt")]
-// result.operands = ["input.rs"]
-```
-
-With the derive macro:
+## What it looks like
 
 ```rust
 #[derive(Command)]
@@ -41,26 +28,37 @@ struct Grep {
 }
 ```
 
-## Features
+No attributes needed on positional fields. `bool` is a flag. `Option<T>` takes a value. `Operands` collects the rest. The struct definition is the parser.
 
-- **Zero runtime dependencies.** stdlib only.
-- **Type-driven.** Field type determines parse behavior. No stringly-typed config.
-- **Shell-native.** Supports `+x`/`-x` polarity flags (`set +e`, `declare -i`).
-- **Lenient mode.** Echo-style parsing where unknown flags become operands.
-- **POSIX-correct.** Flag bundling, stuck values, `--` terminator, bare `-` as operand.
-- **Small.** ~700 lines of implementation. Compiles in under a second.
+## Type mapping
 
-## Types
-
-| Field type | What it parses |
+| Field type | Parses as |
 |---|---|
 | `bool` | `-v` sets true |
 | `Polarity` | `-x` = On, `+x` = Off |
 | `Option<String>` | `-o val` or `-oval` |
-| `Option<T: FromStr>` | `-n 42` parsed |
+| `Option<T: FromStr>` | `-n 42` parsed to T |
 | `Vec<PolarVal>` | `-o val` / `+o val` accumulated |
 | `Operands` | everything after flags |
 
+## Low-level API
+
+If you need direct access to the parser:
+
+```rust
+use ecmd::parse::{scan, FlagDef, FlagKind, OnUnknown};
+
+let flags = &[
+    FlagDef { ch: 'v', kind: FlagKind::Bool, clears: &[] },
+    FlagDef { ch: 'o', kind: FlagKind::Value, clears: &[] },
+];
+
+let r = scan(&["-v", "-ofile", "src"], flags, OnUnknown::Reject).unwrap();
+assert_eq!(r.operands, ["src"]);
+```
+
+Handles POSIX flag bundling (`-abc`), stuck values (`-ofile`), `--` terminator, `+x` polarity, lenient mode (unknown flags become operands), and last-wins mutex groups.
+
 ## License
 
-MIT
+[MIT](LICENSE)
