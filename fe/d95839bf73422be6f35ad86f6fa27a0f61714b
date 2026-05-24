@@ -1,0 +1,23 @@
+rust/core/src/lib.rs
+  s_3d0ce82d03077f::t_48142f408c80e6 33
+rust/core/src/prelude.rs
+  s_3d0ce82d03077f::t_11612917e51e95 1-12
+rust/Cargo.toml
+  s_3d0ce82d03077f::t_115508c388cdd7 6,16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "fed95839bf73422be6f35ad86f6fa27a0f61714b",
+  "prompts": {},
+  "sessions": {
+    "s_3d0ce82d03077f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e08b8646-19c8-4246-99fb-d4907d5c83c0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
