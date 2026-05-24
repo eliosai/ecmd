@@ -1,0 +1,21 @@
+rust/core/Cargo.toml
+  s_f409573a764c70::t_2456dfe5b5ec8a 16
+rust/Cargo.toml
+  s_f409573a764c70::t_8332e3df85bc73 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "2b3c5bf6af88020df43e1de7e184215ed87bebfd",
+  "prompts": {},
+  "sessions": {
+    "s_f409573a764c70": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b00f9f3-a2b7-4911-a2aa-c2e1c0457039",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
