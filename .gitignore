@@ -1,0 +1,12 @@
+target/
+Cargo.lock
+*.pdb
+
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+.claude/
+.mcp.json
