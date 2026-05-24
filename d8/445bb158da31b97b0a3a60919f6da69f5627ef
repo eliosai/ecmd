@@ -1,0 +1,26 @@
+rust/tests/src/lib.rs
+  s_3d0ce82d03077f::t_5857b6a4648d27 413-439
+rust/derive/src/attrs.rs
+  s_3d0ce82d03077f::t_f55d9e72fc46c6 13,22,34-45,59
+rust/derive/src/codegen.rs
+  s_3d0ce82d03077f::t_3f559f92d978e8 328-329,339
+rust/core/src/meta.rs
+  s_3d0ce82d03077f::t_dea1d1d16cbe6b 154
+  s_3d0ce82d03077f::t_607b567588cbb3 41-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "d8445bb158da31b97b0a3a60919f6da69f5627ef",
+  "prompts": {},
+  "sessions": {
+    "s_3d0ce82d03077f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e08b8646-19c8-4246-99fb-d4907d5c83c0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
