@@ -1,0 +1,19 @@
+README.md
+  s_f409573a764c70::t_e837ad28045dfc 5,7-12,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "5f934e1142df9a349d831347aaa6744b667512f1",
+  "prompts": {},
+  "sessions": {
+    "s_f409573a764c70": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b00f9f3-a2b7-4911-a2aa-c2e1c0457039",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
