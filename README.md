@@ -2,16 +2,18 @@
 
 Argument parser for Rust. Type-driven, zero dependencies, strict.
 
-Field types determine parsing behavior. `bool` is a flag, `Option<String>` takes a value, `Operands` collects the rest. A proc macro (WIP) generates the parser from your struct definition.
+Field types determine parsing behavior. `bool` is a flag, `Option<String>` takes a value, `Operands` collects the rest. A derive macro generates the parser from your struct definition.
 
-## Example
+## Usage
+
+```toml
+[dependencies]
+ecmd = "0.2"
+```
 
 ```rust
-use ecmd::meta::Command;
 use ecmd::parse::{scan, FlagDef, FlagKind, OnUnknown};
-use ecmd::operands::Operands;
 
-// What the derive will generate:
 let flags = &[
     FlagDef { ch: 'v', kind: FlagKind::Bool, clears: &[] },
     FlagDef { ch: 'o', kind: FlagKind::Value, clears: &[] },
@@ -22,7 +24,7 @@ let result = scan(&["-v", "-o", "out.txt", "input.rs"], flags, OnUnknown::Reject
 // result.operands = ["input.rs"]
 ```
 
-With the derive macro (coming soon):
+With the derive macro:
 
 ```rust
 #[derive(Command)]
@@ -58,17 +60,6 @@ struct Grep {
 | `Option<T: FromStr>` | `-n 42` parsed |
 | `Vec<PolarVal>` | `-o val` / `+o val` accumulated |
 | `Operands` | everything after flags |
-
-## Status
-
-The core parser is done and tested (54 tests, zero clippy warnings). The derive macro is the next step.
-
-```
-rust/
-  core/     # ecmd crate (parser, types, trait)
-  derive/   # proc macro (planned)
-  tests/    # integration tests
-```
 
 ## License
 
