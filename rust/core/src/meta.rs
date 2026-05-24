@@ -26,6 +26,8 @@ pub trait Command: Sized {
 pub struct CommandDef {
     /// Command name (e.g., "cd").
     pub name: &'static str,
+    /// Short description (from doc comment).
+    pub about: &'static str,
     /// Parsing style.
     pub style: Style,
     /// How unrecognized flags are handled.
@@ -46,6 +48,84 @@ pub struct PositionalDef {
     pub name: &'static str,
     /// Whether the user must provide this argument.
     pub required: bool,
+    /// Human-readable description (from doc comment).
+    pub desc: &'static str,
+}
+
+impl CommandDef {
+    /// Auto-generate a usage string like `cd [-LP] [dir]`.
+    #[must_use]
+    pub fn usage(&self) -> String {
+        let mut parts = Vec::new();
+        parts.push(self.name.to_owned());
+
+        // Bool/polar flags grouped as [-abc]
+        let bool_chars: String = self.flags.iter()
+            .filter(|f| matches!(f.kind, crate::parse::FlagKind::Bool | crate::parse::FlagKind::Polar | crate::parse::FlagKind::Noop))
+            .map(|f| f.ch)
+            .collect();
+        if !bool_chars.is_empty() {
+            parts.push(format!("[-{bool_chars}]"));
+        }
+
+        // Valued flags as [-x VALUE]
+        for f in self.flags {
+            if matches!(f.kind, crate::parse::FlagKind::Value | crate::parse::FlagKind::PolarValue) {
+                let vn = if f.value_name.is_empty() { "ARG" } else { f.value_name };
+                parts.push(format!("[-{} {vn}]", f.ch));
+            }
+        }
+
+        // Positionals
+        for p in self.positionals {
+            if p.required {
+                parts.push(p.name.to_owned());
+            } else {
+                parts.push(format!("[{}]", p.name));
+            }
+        }
+
+        // Rest args
+        if self.has_rest {
+            parts.push("[args...]".to_owned());
+        }
+
+        parts.join(" ")
+    }
+
+    /// Generate bash-style help text.
+    #[must_use]
+    pub fn help(&self) -> String {
+        let mut out = String::new();
+
+        // About
+        if !self.about.is_empty() {
+            out.push_str(self.about);
+            out.push('\n');
+        }
+
+        // Usage
+        out.push_str(&format!("\nUsage: {}\n", self.usage()));
+
+        // Options section
+        if !self.flags.is_empty() {
+            out.push_str("\nOptions:\n");
+            for f in self.flags {
+                let flag_str = if f.value_name.is_empty() {
+                    format!("  -{}", f.ch)
+                } else {
+                    format!("  -{} {}", f.ch, f.value_name)
+                };
+                if f.desc.is_empty() {
+                    out.push_str(&format!("{flag_str}\n"));
+                } else {
+                    out.push_str(&format!("{flag_str:20}{}\n", f.desc));
+                }
+            }
+        }
+
+        out
+    }
 }
 
 #[cfg(test)]
@@ -59,12 +139,14 @@ mod tests {
     fn command_def_is_const_constructible() {
         static DEF: CommandDef = CommandDef {
             name: "test",
+            about: "",
             style: Style::Posix,
             on_unknown: OnUnknown::Reject,
             flags: &[],
             positionals: &[PositionalDef {
                 name: "target",
                 required: true,
+                desc: "",
             }],
             has_rest: false,
         };

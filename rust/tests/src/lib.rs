@@ -321,4 +321,93 @@ mod tests {
         assert!(def.positionals[0].required);
         assert!(def.has_rest);
     }
+
+    // ── Doc comments → about/desc ──────────────────────────────────
+
+    /// Change the shell working directory.
+    #[derive(Command)]
+    #[command(name = "mycd")]
+    struct MyCd {
+        /// Follow symlinks (default).
+        #[flag(short = 'L', clears(my_physical))]
+        my_logical: bool,
+        /// Use physical directory.
+        #[flag(short = 'P', clears(my_logical))]
+        my_physical: bool,
+        /// Target directory.
+        target: Option<String>,
+    }
+
+    #[test]
+    fn doc_comment_about() {
+        assert_eq!(MyCd::def().about, "Change the shell working directory.");
+    }
+
+    #[test]
+    fn doc_comment_flag_desc() {
+        let flags = MyCd::def().flags;
+        assert_eq!(flags[0].desc, "Follow symlinks (default).");
+        assert_eq!(flags[1].desc, "Use physical directory.");
+    }
+
+    #[test]
+    fn doc_comment_positional_desc() {
+        let pos = MyCd::def().positionals;
+        assert_eq!(pos[0].desc, "Target directory.");
+    }
+
+    #[test]
+    fn usage_auto_generated() {
+        let usage = MyCd::def().usage();
+        assert_eq!(usage, "mycd [-LP] [target]");
+    }
+
+    #[test]
+    fn help_contains_about_and_flags() {
+        let help = MyCd::def().help();
+        assert!(help.contains("Change the shell working directory."));
+        assert!(help.contains("-L"));
+        assert!(help.contains("Follow symlinks"));
+        assert!(help.contains("-P"));
+        assert!(help.contains("Use physical directory"));
+    }
+
+    // ── value_name ─────────────────────────────────────────────────
+
+    /// Read input.
+    #[derive(Command)]
+    #[command(name = "myread", noop = "eE")]
+    struct MyRead {
+        /// Raw mode.
+        #[flag(short = 'r')]
+        raw: bool,
+        /// Read N characters.
+        #[flag(short = 'n', value_name = "NCHARS")]
+        nchars: Option<usize>,
+        /// Prompt string.
+        #[flag(short = 'p', value_name = "PROMPT")]
+        prompt: Option<String>,
+        vars: Operands,
+    }
+
+    #[test]
+    fn value_name_in_usage() {
+        let usage = MyRead::def().usage();
+        assert!(usage.contains("[-n NCHARS]"), "got: {usage}");
+        assert!(usage.contains("[-p PROMPT]"), "got: {usage}");
+    }
+
+    #[test]
+    fn value_name_in_help() {
+        let help = MyRead::def().help();
+        assert!(help.contains("-n NCHARS"), "got: {help}");
+        assert!(help.contains("Read N characters"), "got: {help}");
+    }
+
+    #[test]
+    fn value_name_in_flag_def() {
+        let flags = MyRead::def().flags;
+        let n_flag = flags.iter().find(|f| f.ch == 'n').unwrap();
+        assert_eq!(n_flag.value_name, "NCHARS");
+    }
 }

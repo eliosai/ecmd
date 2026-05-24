@@ -45,6 +45,10 @@ pub struct FlagDef {
     pub kind: FlagKind,
     /// Flags cleared when this one fires (last-wins mutex).
     pub clears: &'static [char],
+    /// Human-readable description (from doc comment).
+    pub desc: &'static str,
+    /// Value placeholder (empty for bool flags, e.g. "PATH" for valued).
+    pub value_name: &'static str,
 }
 
 /// Result of parsing a single flag occurrence.
@@ -277,19 +281,19 @@ mod tests {
     use crate::polarity::Polarity;
 
     fn bool_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Bool, clears: &[] }
+        FlagDef { ch, kind: FlagKind::Bool, clears: &[], desc: "", value_name: "" }
     }
 
     fn value_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Value, clears: &[] }
+        FlagDef { ch, kind: FlagKind::Value, clears: &[], desc: "", value_name: "" }
     }
 
     fn polar_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Polar, clears: &[] }
+        FlagDef { ch, kind: FlagKind::Polar, clears: &[], desc: "", value_name: "" }
     }
 
     fn noop_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Noop, clears: &[] }
+        FlagDef { ch, kind: FlagKind::Noop, clears: &[], desc: "", value_name: "" }
     }
 
     #[test]
@@ -482,7 +486,7 @@ mod tests {
 
     #[test]
     fn polar_value_on() {
-        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, clears: &[] }];
+        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, clears: &[], desc: "", value_name: "" }];
         let r = scan(&["-o", "errexit"], &flags, OnUnknown::Reject).unwrap();
         assert_eq!(r.flags, [Parsed::PolarValue('o', Polarity::On, "errexit".into())]);
         assert!(r.operands.is_empty());
@@ -490,7 +494,7 @@ mod tests {
 
     #[test]
     fn polar_value_off() {
-        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, clears: &[] }];
+        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, clears: &[], desc: "", value_name: "" }];
         let r = scan(&["+o", "verbose"], &flags, OnUnknown::Reject).unwrap();
         assert_eq!(r.flags, [Parsed::PolarValue('o', Polarity::Off, "verbose".into())]);
         assert!(r.operands.is_empty());
@@ -498,7 +502,7 @@ mod tests {
 
     #[test]
     fn polar_value_stuck() {
-        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, clears: &[] }];
+        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, clears: &[], desc: "", value_name: "" }];
         let r = scan(&["-oerrexit"], &flags, OnUnknown::Reject).unwrap();
         assert_eq!(r.flags, [Parsed::PolarValue('o', Polarity::On, "errexit".into())]);
         assert!(r.operands.is_empty());

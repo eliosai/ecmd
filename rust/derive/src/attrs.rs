@@ -50,6 +50,7 @@ impl CommandAttrs {
 pub struct FlagAttrs {
     pub short: char,
     pub clears: Vec<Ident>,
+    pub value_name: String,
 }
 
 impl FlagAttrs {
@@ -60,6 +61,7 @@ impl FlagAttrs {
 
         let mut short = '\0';
         let mut clears = Vec::new();
+        let mut value_name = String::new();
 
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("short") {
@@ -69,6 +71,8 @@ impl FlagAttrs {
                 syn::parenthesized!(content in meta.input);
                 let idents = content.parse_terminated(Ident::parse_any, Token![,])?;
                 clears.extend(idents);
+            } else if meta.path.is_ident("value_name") {
+                value_name = parse_lit_str(&meta)?;
             } else {
                 return Err(meta.error("unknown flag attribute"));
             }
@@ -79,8 +83,26 @@ impl FlagAttrs {
             return Err(syn::Error::new_spanned(attr, "missing `short` in #[flag(...)]"));
         }
 
-        Ok(Some(Self { short, clears }))
+        Ok(Some(Self { short, clears, value_name }))
     }
+}
+
+/// Extract doc comment lines from attributes, trimmed and joined.
+pub fn extract_doc_comment(attrs: &[syn::Attribute]) -> String {
+    let lines: Vec<String> = attrs
+        .iter()
+        .filter(|a| a.path().is_ident("doc"))
+        .filter_map(|a| {
+            if let syn::Meta::NameValue(nv) = &a.meta {
+                if let Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) = &nv.value {
+                    return Some(s.value());
+                }
+            }
+            None
+        })
+        .map(|s| s.strip_prefix(' ').unwrap_or(&s).to_owned())
+        .collect();
+    lines.join("\n").trim().to_owned()
 }
 
 fn parse_lit_str(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<String> {

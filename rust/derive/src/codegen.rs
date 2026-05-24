@@ -6,7 +6,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Data, Fields, Field, Ident};
 
-use crate::attrs::CommandAttrs;
+use crate::attrs::{CommandAttrs, extract_doc_comment};
 use crate::classify::{FieldRole, classify_field, field_ident};
 
 /// Classified field with its role pre-computed.
@@ -14,17 +14,19 @@ struct ClassifiedField<'a> {
     field: &'a Field,
     ident: &'a Ident,
     role: FieldRole,
+    desc: String,
 }
 
 /// Main expansion entry point.
 pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let cmd = CommandAttrs::from_ast(&input.attrs)?;
+    let about = extract_doc_comment(&input.attrs);
     let raw_fields = extract_named_fields(input)?;
     let fields = classify_all(raw_fields)?;
     validate(&fields)?;
     let name = &input.ident;
 
-    let meta_body = gen_meta(&cmd, &fields);
+    let meta_body = gen_meta(&cmd, &about, &fields);
     let parse_body = gen_parse(&cmd, &fields);
 
     Ok(quote! {
@@ -56,7 +58,8 @@ fn extract_named_fields(input: &DeriveInput) -> syn::Result<&syn::punctuated::Pu
 fn classify_all(fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>) -> syn::Result<Vec<ClassifiedField<'_>>> {
     fields.iter().map(|f| {
         let role = classify_field(f)?;
-        Ok(ClassifiedField { field: f, ident: field_ident(f), role })
+        let desc = extract_doc_comment(&f.attrs);
+        Ok(ClassifiedField { field: f, ident: field_ident(f), role, desc })
     }).collect()
 }
 
@@ -177,15 +180,17 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
     for cf in fields {
         if let Some((ch, kind)) = flag_def_tokens(&cf.role) {
             let clears: Vec<char> = resolve_clears(&cf.role, fields);
+            let desc = &cf.desc;
+            let value_name = flag_value_name(&cf.role);
             defs.push(quote! {
-                ::ecmd::parse::FlagDef { ch: #ch, kind: #kind, clears: &[#(#clears),*] }
+                ::ecmd::parse::FlagDef { ch: #ch, kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name }
             });
         }
     }
 
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, kind: ::ecmd::parse::FlagKind::Noop, clears: &[] }
+            ::ecmd::parse::FlagDef { ch: #ch, kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "" }
         });
     }
 
@@ -305,7 +310,7 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
 
 // ── Meta codegen ────────────────────────────────────────────────
 
-fn gen_meta(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
+fn gen_meta(cmd: &CommandAttrs, about: &str, fields: &[ClassifiedField<'_>]) -> TokenStream {
     let name = &cmd.name;
     let style = if cmd.style == "gnu" {
         quote! { ::ecmd::style::Style::Gnu }
@@ -323,6 +328,7 @@ fn gen_meta(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
     quote! {
         ::ecmd::meta::CommandDef {
             name: #name,
+            about: #about,
             style: #style,
             on_unknown: #on_unknown,
             flags: &[#flag_metas],
@@ -336,8 +342,10 @@ fn gen_flag_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
     let defs: Vec<_> = fields.iter().filter_map(|cf| {
         let (ch, kind) = flag_def_tokens(&cf.role)?;
         let clears: Vec<char> = resolve_clears(&cf.role, fields);
+        let desc = &cf.desc;
+        let value_name = flag_value_name(&cf.role);
         Some(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, kind: #kind, clears: &[#(#clears),*] }
+            ::ecmd::parse::FlagDef { ch: #ch, kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name }
         })
     }).collect();
     quote! { #(#defs),* }
@@ -351,8 +359,9 @@ fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
             _ => return None,
         };
         let name = cf.ident.to_string();
+        let desc = &cf.desc;
         Some(quote! {
-            ::ecmd::meta::PositionalDef { name: #name, required: #required }
+            ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc }
         })
     }).collect();
     quote! { #(#defs),* }
@@ -431,4 +440,15 @@ fn resolve_clears(role: &FieldRole, all: &[ClassifiedField<'_>]) -> Vec<char> {
     clears_targets(role).iter().filter_map(|target| {
         all.iter().find(|cf| cf.ident == target).and_then(|cf| flag_char(&cf.role))
     }).collect()
+}
+
+fn flag_value_name(role: &FieldRole) -> &str {
+    match role {
+        FieldRole::ValuedFlag(a)
+        | FieldRole::RepeatableValueFlag(a)
+        | FieldRole::PolarValueFlag(a) => {
+            if a.value_name.is_empty() { "ARG" } else { &a.value_name }
+        }
+        _ => "",
+    }
 }
