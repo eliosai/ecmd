@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+ecmd = { path = "../core" }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
 
 [lints]
 workspace = true

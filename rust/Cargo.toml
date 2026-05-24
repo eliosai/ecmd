@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["core", "tests"]
+members = ["core", "derive", "tests"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 authors = ["Joshua Smotritsky"]
 license = "MIT"
@@ -96,7 +96,6 @@ excessive_nesting = "warn"
 # No re-exports
 wildcard_imports = "warn"
 enum_glob_use = "warn"
-pub_use = "warn"
 wildcard_dependencies = "warn"
 
 # API design
@@ -122,7 +121,6 @@ mod_module_files = "warn"
 
 # String handling
 str_to_string = "warn"
-string_to_string = "warn"
 string_add = "warn"
 string_add_assign = "warn"
 format_push_string = "warn"
