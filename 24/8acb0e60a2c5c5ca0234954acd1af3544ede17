@@ -1,0 +1,25 @@
+.github/workflows/ci.yml
+  s_f409573a764c70::t_a238efde40ec7f 14
+rust/core/Cargo.toml
+  s_f409573a764c70::t_e417707fbb5764 10
+rust/Cargo.toml
+  s_f409573a764c70::t_9358f72daf899a 6
+rust/core/README.md
+  s_f409573a764c70::t_47245b0df05601 3,5-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "248acb0e60a2c5c5ca0234954acd1af3544ede17",
+  "prompts": {},
+  "sessions": {
+    "s_f409573a764c70": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b00f9f3-a2b7-4911-a2aa-c2e1c0457039",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
