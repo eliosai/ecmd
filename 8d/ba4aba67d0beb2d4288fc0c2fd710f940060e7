@@ -1,0 +1,19 @@
+README.md
+  s_f409573a764c70::t_31b6e30d38a209 3-5,7,14,31,33,35,40,44-61,64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "8dba4aba67d0beb2d4288fc0c2fd710f940060e7",
+  "prompts": {},
+  "sessions": {
+    "s_f409573a764c70": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b00f9f3-a2b7-4911-a2aa-c2e1c0457039",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
