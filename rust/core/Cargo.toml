@@ -13,7 +13,7 @@ categories = ["command-line-interface"]
 include = ["src/**/*", "Cargo.toml", "LICENSE", "README.md"]
 
 [dependencies]
-ecmd-derive = { path = "../derive", optional = true }
+ecmd-derive = { workspace = true, optional = true }
 
 [features]
 default = ["derive"]
