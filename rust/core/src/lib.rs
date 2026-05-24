@@ -30,6 +30,7 @@ pub mod meta;
 pub mod operands;
 pub mod parse;
 pub mod polarity;
+pub mod prelude;
 pub mod style;
 
 /// Derive macro for the `Command` trait.
