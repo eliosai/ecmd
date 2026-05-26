@@ -1,0 +1,36 @@
+rust/derive/src/codegen.rs
+  s_d0684c1b7aa0ed::t_e9e9a3d31fb6e7 313-317,319-320,336-344,349,356-358
+  s_d0684c1b7aa0ed::t_4811b57d13adfc 23,29
+  s_d0684c1b7aa0ed::t_176a61d8758e61 9
+rust/tests/src/lib.rs
+  s_d0684c1b7aa0ed::t_af9b1e55327a04 440-604
+rust/derive/src/attrs.rs
+  s_d0684c1b7aa0ed::t_6e712d5291d373 43-46
+  s_d0684c1b7aa0ed::t_44f9ac655be3c3 14-15,25-26,38-42,47,73,118-131,134-139,151-152,156-162,164-169,171-173,175-178,180-184,186-187,189-193,195-196,198-199,201-213,215-216
+  s_d0684c1b7aa0ed::t_93b1855b11f306 143-146,153-155,163,170,174,179,185,188,194,197,200,214
+rust/core/src/meta.rs
+  s_d0684c1b7aa0ed::t_4b57aa0dcbcf84 129
+  s_d0684c1b7aa0ed::t_25a6128a49332e 283-300
+  s_d0684c1b7aa0ed::t_c415b91b2090e0 385-395
+  s_d0684c1b7aa0ed::t_1ed95591ee005e 322-328
+  s_d0684c1b7aa0ed::t_70b89499504345 212-215,218-219
+  s_d0684c1b7aa0ed::t_5b1266711dedb8 352-361
+  s_d0684c1b7aa0ed::t_7d0c590661db3b 32,54,56-57,70-75,90-91,100,108,132-159,161-165,168-172,180-211,216-217,227,230-282,301-321,329-351,362-384,396-513,519,530-532
+  s_d0684c1b7aa0ed::t_13c5707729c19d 3-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "d63dedf03dc345a35035592e8d70caf6effc0960",
+  "prompts": {},
+  "sessions": {
+    "s_d0684c1b7aa0ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4cbe00cc-1443-4071-95b0-c7bde8a0b9a3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
