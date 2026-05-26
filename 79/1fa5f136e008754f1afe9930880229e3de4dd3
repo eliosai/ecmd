@@ -1,0 +1,19 @@
+rust/Cargo.toml
+  s_d0684c1b7aa0ed::t_3cb6f58512ec4f 6,16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "791fa5f136e008754f1afe9930880229e3de4dd3",
+  "prompts": {},
+  "sessions": {
+    "s_d0684c1b7aa0ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4cbe00cc-1443-4071-95b0-c7bde8a0b9a3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
