@@ -437,4 +437,169 @@ mod tests {
     fn tags_empty_when_none() {
         assert!(MyCd::def().tags.is_empty());
     }
+
+    // ── Doc comment sections → bash-compatible help ────────────────
+
+    /// Define or display aliases.
+    ///
+    /// Without arguments, `alias' prints the list of aliases in the reusable
+    /// form `alias NAME=VALUE' on standard output.
+    ///
+    /// Otherwise, an alias is defined for each NAME whose VALUE is given.
+    /// A trailing space in VALUE causes the next word to be checked for
+    /// alias substitution when the alias is expanded.
+    ///
+    /// # Options
+    ///
+    /// # Exit Status
+    /// alias returns true unless a NAME is supplied for which no alias has been
+    /// defined.
+    #[derive(Command)]
+    #[command(name = "alias", tag(kind = "bash"), lenient,
+        short_doc = "alias [-p] [name[=value] ... ]")]
+    struct BashAlias {
+        /// print all defined aliases in a reusable format
+        #[flag(short = 'p')]
+        alias_print: bool,
+        alias_args: Operands,
+    }
+
+    #[test]
+    fn derive_alias_help_matches_bash() {
+        let expected = concat!(
+            "alias: alias [-p] [name[=value] ... ]\n",
+            "    Define or display aliases.\n",
+            "    \n",
+            "    Without arguments, `alias' prints the list of aliases in the reusable\n",
+            "    form `alias NAME=VALUE' on standard output.\n",
+            "    \n",
+            "    Otherwise, an alias is defined for each NAME whose VALUE is given.\n",
+            "    A trailing space in VALUE causes the next word to be checked for\n",
+            "    alias substitution when the alias is expanded.\n",
+            "    \n",
+            "    Options:\n",
+            "      -p\tprint all defined aliases in a reusable format\n",
+            "    \n",
+            "    Exit Status:\n",
+            "    alias returns true unless a NAME is supplied for which no alias has been\n",
+            "    defined.\n",
+        );
+        assert_eq!(BashAlias::def().help(), expected);
+    }
+
+    #[test]
+    fn derive_alias_about_from_first_paragraph() {
+        assert_eq!(BashAlias::def().about, "Define or display aliases.");
+    }
+
+    #[test]
+    fn derive_alias_short_doc_in_help() {
+        assert!(BashAlias::def().help().starts_with("alias: alias [-p] [name[=value] ... ]\n"));
+    }
+
+    // ── Minimal: no Options, no Exit Status ────────────────────────
+
+    /// Exit the shell.
+    ///
+    /// Exits the shell with a status of N.  If N is omitted, the exit status
+    /// is that of the last command executed.
+    #[derive(Command)]
+    #[command(name = "exit", tag(kind = "special"), tag(special),
+        short_doc = "exit [n]")]
+    struct BashExit {
+        exit_code: Option<String>,
+    }
+
+    #[test]
+    fn derive_exit_help_matches_bash() {
+        let expected = concat!(
+            "exit: exit [n]\n",
+            "    Exit the shell.\n",
+            "    \n",
+            "    Exits the shell with a status of N.  If N is omitted, the exit status\n",
+            "    is that of the last command executed.\n",
+        );
+        assert_eq!(BashExit::def().help(), expected);
+    }
+
+    // ── extra_help attribute for tab-formatted content ──────────────
+
+    /// Write arguments to the standard output.
+    ///
+    /// Display the ARGs, separated by a single space character and followed by a
+    /// newline, on the standard output.
+    ///
+    /// # Exit Status
+    /// Returns success unless a write error occurs.
+    #[derive(Command)]
+    #[command(name = "echo2", tag(kind = "bash"), tag(no_help), lenient,
+        short_doc = "echo [-neE] [arg ...]",
+        extra_help(
+            "Options:",
+            "  -n\tdo not append a newline",
+            "  -e\tenable interpretation of the following backslash escapes",
+            "  -E\texplicitly suppress interpretation of backslash escapes",
+        ),
+    )]
+    struct BashEcho {
+        echo_args: Operands,
+    }
+
+    #[test]
+    fn derive_echo_extra_help_replaces_doc_extra() {
+        let help = BashEcho::def().help();
+        assert!(help.contains("      -n\tdo not append a newline\n"));
+        assert!(help.contains("    Exit Status:\n    Returns success"));
+    }
+
+    #[test]
+    fn derive_echo_no_help_tag() {
+        let def = BashEcho::def();
+        assert!(def.tags.iter().any(|&(k, _)| k == "no_help"));
+    }
+
+    // ── Multi-line flag descriptions ───────────────────────────────
+
+    /// Change the shell working directory.
+    ///
+    /// Change the current directory to DIR.
+    ///
+    /// # Options
+    ///
+    /// The default is to follow symbolic links.
+    ///
+    /// # Exit Status
+    /// Returns 0 if the directory is changed.
+    #[derive(Command)]
+    #[command(name = "cd2", short_doc = "cd [-LP] [dir]")]
+    struct BashCd {
+        /// force symbolic links to be followed: resolve symbolic
+        /// links in DIR after processing instances of `..'
+        #[flag(short = 'L', clears(cd_physical))]
+        cd_logical: bool,
+        /// use the physical directory structure without following
+        /// symbolic links
+        #[flag(short = 'P', clears(cd_logical))]
+        cd_physical: bool,
+        cd_dir: Option<String>,
+    }
+
+    #[test]
+    fn derive_cd_multiline_flag_desc() {
+        let help = BashCd::def().help();
+        assert!(help.contains("  -L\tforce symbolic links to be followed: resolve symbolic\n"));
+        assert!(help.contains("\t\tlinks in DIR after processing instances of `..'\n"));
+    }
+
+    #[test]
+    fn derive_cd_post_options_extra() {
+        let help = BashCd::def().help();
+        assert!(help.contains("    The default is to follow symbolic links.\n"));
+    }
+
+    #[test]
+    fn derive_cd_exit_status() {
+        let help = BashCd::def().help();
+        assert!(help.contains("    Exit Status:\n    Returns 0 if the directory is changed.\n"));
+    }
 }

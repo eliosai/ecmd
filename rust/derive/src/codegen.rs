@@ -6,7 +6,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Data, Fields, Field, Ident};
 
-use crate::attrs::{CommandAttrs, extract_doc_comment};
+use crate::attrs::{CommandAttrs, extract_doc_comment, extract_doc_sections};
 use crate::classify::{FieldRole, classify_field, field_ident};
 
 /// Classified field with its role pre-computed.
@@ -20,13 +20,13 @@ struct ClassifiedField<'a> {
 /// Main expansion entry point.
 pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let cmd = CommandAttrs::from_ast(&input.attrs)?;
-    let about = extract_doc_comment(&input.attrs);
+    let sections = extract_doc_sections(&input.attrs);
     let raw_fields = extract_named_fields(input)?;
     let fields = classify_all(raw_fields)?;
     validate(&fields)?;
     let name = &input.ident;
 
-    let meta_body = gen_meta(&cmd, &about, &fields);
+    let meta_body = gen_meta(&cmd, &sections, &fields);
     let parse_body = gen_parse(&cmd, &fields);
 
     Ok(quote! {
@@ -310,8 +310,14 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
 
 // ── Meta codegen ────────────────────────────────────────────────
 
-fn gen_meta(cmd: &CommandAttrs, about: &str, fields: &[ClassifiedField<'_>]) -> TokenStream {
+fn gen_meta(
+    cmd: &CommandAttrs,
+    sections: &crate::attrs::DocSections,
+    fields: &[ClassifiedField<'_>],
+) -> TokenStream {
     let name = &cmd.name;
+    let about = &sections.about;
+    let short_doc = &cmd.short_doc;
     let style = if cmd.style == "gnu" {
         quote! { ::ecmd::style::Style::Gnu }
     } else {
@@ -327,16 +333,29 @@ fn gen_meta(cmd: &CommandAttrs, about: &str, fields: &[ClassifiedField<'_>]) -> 
     let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
     let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
+
+    let desc_lines: &Vec<String> = &sections.description;
+    let extra_lines: &Vec<String> = if cmd.extra_help.is_empty() {
+        &sections.extra
+    } else {
+        &cmd.extra_help
+    };
+    let exit_lines: &Vec<String> = &sections.exit_status;
+
     quote! {
         ::ecmd::meta::CommandDef {
             name: #name,
             about: #about,
+            short_doc: #short_doc,
             style: #style,
             on_unknown: #on_unknown,
             flags: &[#flag_metas],
             positionals: &[#pos_metas],
             has_rest: #has_rest,
             tags: &[#( (#tag_keys, #tag_vals) ),*],
+            description: &[#( #desc_lines ),*],
+            extra: &[#( #extra_lines ),*],
+            exit_status: &[#( #exit_lines ),*],
         }
     }
 }

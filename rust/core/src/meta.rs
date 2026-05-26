@@ -1,10 +1,35 @@
 //! Command metadata and the `Command` trait.
 //!
-//! The derive macro generates implementations of `Command`, producing
-//! static `CommandDef` descriptors for introspection and help text.
+//! The derive macro generates implementations of [`Command`], producing
+//! static [`CommandDef`] descriptors for introspection and help text.
+//!
+//! # Help sections
+//!
+//! Doc comments on the struct are parsed into bash-compatible help sections
+//! using two markers: `# Options` and `# Exit Status`.
+//!
+//! ```rust,ignore
+//! /// Summary line.                         → about
+//! ///
+//! /// Description paragraphs.               → description
+//! ///
+//! /// # Options                             → auto-generated Options inserted here
+//! ///
+//! /// Post-options text.                    → extra (after Options)
+//! ///
+//! /// # Exit Status                         → exit_status header
+//! /// Status description.                   → exit_status content
+//! ```
+//!
+//! If `# Options` is absent, auto-generated Options are placed after the
+//! description. If `# Exit Status` is absent, no Exit Status section appears.
+//!
+//! Two optional attributes on `#[command()]`:
+//! - `short_doc = "..."` — overrides auto-generated usage in help display
+//! - `extra_help("line", ...)` — tab-formatted content (replaces doc extra)
 
 use crate::error::Error;
-use crate::parse::{FlagDef, OnUnknown};
+use crate::parse::{FlagDef, FlagKind, OnUnknown};
 use crate::style::Style;
 
 /// The trait implemented by `#[derive(Command)]` structs.
@@ -26,8 +51,10 @@ pub trait Command: Sized {
 pub struct CommandDef {
     /// Command name (e.g., "cd").
     pub name: &'static str,
-    /// Short description (from doc comment).
+    /// Short description (first line of doc comment).
     pub about: &'static str,
+    /// Override for the auto-generated usage in help display.
+    pub short_doc: &'static str,
     /// Parsing style.
     pub style: Style,
     /// How unrecognized flags are handled.
@@ -40,6 +67,12 @@ pub struct CommandDef {
     pub has_rest: bool,
     /// Generic key-value tags for downstream consumers.
     pub tags: &'static [(&'static str, &'static str)],
+    /// Body paragraphs between summary and Options.
+    pub description: &'static [&'static str],
+    /// Content placed after auto-generated Options section.
+    pub extra: &'static [&'static str],
+    /// Exit Status section content.
+    pub exit_status: &'static [&'static str],
 }
 
 /// Metadata for a positional argument slot.
@@ -54,6 +87,8 @@ pub struct PositionalDef {
     pub desc: &'static str,
 }
 
+const INDENT: &str = "    ";
+
 impl CommandDef {
     /// Auto-generate a usage string like `cd [-LP] [dir]`.
     #[must_use]
@@ -61,24 +96,21 @@ impl CommandDef {
         let mut parts = Vec::new();
         parts.push(self.name.to_owned());
 
-        // Bool/polar flags grouped as [-abc]
         let bool_chars: String = self.flags.iter()
-            .filter(|f| matches!(f.kind, crate::parse::FlagKind::Bool | crate::parse::FlagKind::Polar | crate::parse::FlagKind::Noop))
+            .filter(|f| matches!(f.kind, FlagKind::Bool | FlagKind::Polar | FlagKind::Noop))
             .map(|f| f.ch)
             .collect();
         if !bool_chars.is_empty() {
             parts.push(format!("[-{bool_chars}]"));
         }
 
-        // Valued flags as [-x VALUE]
         for f in self.flags {
-            if matches!(f.kind, crate::parse::FlagKind::Value | crate::parse::FlagKind::PolarValue) {
+            if matches!(f.kind, FlagKind::Value | FlagKind::PolarValue) {
                 let vn = if f.value_name.is_empty() { "ARG" } else { f.value_name };
                 parts.push(format!("[-{} {vn}]", f.ch));
             }
         }
 
-        // Positionals
         for p in self.positionals {
             if p.required {
                 parts.push(p.name.to_owned());
@@ -87,7 +119,6 @@ impl CommandDef {
             }
         }
 
-        // Rest args
         if self.has_rest {
             parts.push("[args...]".to_owned());
         }
@@ -95,34 +126,50 @@ impl CommandDef {
         parts.join(" ")
     }
 
-    /// Generate bash-style help text.
+    /// Bash-compatible help text: `name: SHORT_DOC` + 4-space indented body.
     #[must_use]
     pub fn help(&self) -> String {
-        let mut out = String::new();
+        let mut out = String::with_capacity(512);
 
-        // About
-        if !self.about.is_empty() {
-            out.push_str(self.about);
-            out.push('\n');
+        let sd = if self.short_doc.is_empty() {
+            self.usage()
+        } else {
+            self.short_doc.to_owned()
+        };
+        push_line(&mut out, "", &format!("{}: {}", self.name, sd));
+
+        push_line(&mut out, INDENT, self.about);
+
+        if !self.description.is_empty() {
+            push_empty(&mut out);
+            for line in self.description {
+                push_body(&mut out, line);
+            }
         }
 
-        // Usage
-        out.push_str(&format!("\nUsage: {}\n", self.usage()));
+        let printable: Vec<_> = self.flags.iter()
+            .filter(|f| !matches!(f.kind, FlagKind::Noop))
+            .collect();
+        if !printable.is_empty() {
+            push_empty(&mut out);
+            push_line(&mut out, INDENT, "Options:");
+            for f in &printable {
+                push_flag(&mut out, f);
+            }
+        }
 
-        // Options section
-        if !self.flags.is_empty() {
-            out.push_str("\nOptions:\n");
-            for f in self.flags {
-                let flag_str = if f.value_name.is_empty() {
-                    format!("  -{}", f.ch)
-                } else {
-                    format!("  -{} {}", f.ch, f.value_name)
-                };
-                if f.desc.is_empty() {
-                    out.push_str(&format!("{flag_str}\n"));
-                } else {
-                    out.push_str(&format!("{flag_str:20}{}\n", f.desc));
-                }
+        if !self.extra.is_empty() {
+            push_empty(&mut out);
+            for line in self.extra {
+                push_body(&mut out, line);
+            }
+        }
+
+        if !self.exit_status.is_empty() {
+            push_empty(&mut out);
+            push_line(&mut out, INDENT, "Exit Status:");
+            for line in self.exit_status {
+                push_body(&mut out, line);
             }
         }
 
@@ -130,18 +177,346 @@ impl CommandDef {
     }
 }
 
+fn push_line(out: &mut String, indent: &str, text: &str) {
+    out.push_str(indent);
+    out.push_str(text);
+    out.push('\n');
+}
+
+fn push_empty(out: &mut String) {
+    out.push_str(INDENT);
+    out.push('\n');
+}
+
+fn push_body(out: &mut String, line: &str) {
+    if line.is_empty() {
+        push_empty(out);
+    } else {
+        push_line(out, INDENT, line);
+    }
+}
+
+fn push_flag(out: &mut String, f: &FlagDef) {
+    let flag_part = if f.value_name.is_empty() {
+        format!("-{}", f.ch)
+    } else {
+        format!("-{} {}", f.ch, f.value_name)
+    };
+
+    let desc_lines: Vec<&str> = if f.desc.is_empty() {
+        vec![]
+    } else {
+        f.desc.split('\n').collect()
+    };
+
+    let mut lines = desc_lines.iter();
+    if let Some(first) = lines.next() {
+        push_line(out, INDENT, &format!("  {flag_part}\t{first}"));
+        for cont in lines {
+            push_line(out, INDENT, &format!("\t\t{cont}"));
+        }
+    } else {
+        push_line(out, INDENT, &format!("  {flag_part}"));
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests verify known structure")]
 mod tests {
     use super::{CommandDef, PositionalDef};
-    use crate::parse::OnUnknown;
+    use crate::parse::{FlagDef, FlagKind, OnUnknown};
     use crate::style::Style;
+
+    fn make_def(
+        name: &'static str,
+        about: &'static str,
+        short_doc: &'static str,
+        flags: &'static [FlagDef],
+        description: &'static [&'static str],
+        extra: &'static [&'static str],
+        exit_status: &'static [&'static str],
+    ) -> CommandDef {
+        CommandDef {
+            name,
+            about,
+            short_doc,
+            style: Style::Posix,
+            on_unknown: OnUnknown::Reject,
+            flags,
+            positionals: &[],
+            has_rest: false,
+            tags: &[],
+            description,
+            extra,
+            exit_status,
+        }
+    }
+
+    // ── Test against real `bash -c 'help alias'` output ────────
+
+    static ALIAS_FLAGS: [FlagDef; 1] = [
+        FlagDef { ch: 'p', kind: FlagKind::Bool, clears: &[], desc: "print all defined aliases in a reusable format", value_name: "" },
+    ];
+
+    #[test]
+    fn help_alias_matches_bash() {
+        let def = make_def(
+            "alias",
+            "Define or display aliases.",
+            "alias [-p] [name[=value] ... ]",
+            &ALIAS_FLAGS,
+            &[
+                "Without arguments, `alias' prints the list of aliases in the reusable",
+                "form `alias NAME=VALUE' on standard output.",
+                "",
+                "Otherwise, an alias is defined for each NAME whose VALUE is given.",
+                "A trailing space in VALUE causes the next word to be checked for",
+                "alias substitution when the alias is expanded.",
+            ],
+            &[],
+            &[
+                "alias returns true unless a NAME is supplied for which no alias has been",
+                "defined.",
+            ],
+        );
+
+        let expected = concat!(
+            "alias: alias [-p] [name[=value] ... ]\n",
+            "    Define or display aliases.\n",
+            "    \n",
+            "    Without arguments, `alias' prints the list of aliases in the reusable\n",
+            "    form `alias NAME=VALUE' on standard output.\n",
+            "    \n",
+            "    Otherwise, an alias is defined for each NAME whose VALUE is given.\n",
+            "    A trailing space in VALUE causes the next word to be checked for\n",
+            "    alias substitution when the alias is expanded.\n",
+            "    \n",
+            "    Options:\n",
+            "      -p\tprint all defined aliases in a reusable format\n",
+            "    \n",
+            "    Exit Status:\n",
+            "    alias returns true unless a NAME is supplied for which no alias has been\n",
+            "    defined.\n",
+        );
+        assert_eq!(def.help(), expected);
+    }
+
+    // ── Test against real `bash -c 'help exit'` output ─────────
+    // exit has no Options, no Exit Status section
+
+    #[test]
+    fn help_exit_matches_bash() {
+        let def = make_def(
+            "exit",
+            "Exit the shell.",
+            "exit [n]",
+            &[],
+            &[
+                "Exits the shell with a status of N.  If N is omitted, the exit status",
+                "is that of the last command executed.",
+            ],
+            &[],
+            &[],
+        );
+
+        let expected = concat!(
+            "exit: exit [n]\n",
+            "    Exit the shell.\n",
+            "    \n",
+            "    Exits the shell with a status of N.  If N is omitted, the exit status\n",
+            "    is that of the last command executed.\n",
+        );
+        assert_eq!(def.help(), expected);
+    }
+
+    // ── Test against real `bash -c 'help shift'` output ────────
+    // shift has no Options but has Exit Status
+
+    #[test]
+    fn help_shift_matches_bash() {
+        let def = make_def(
+            "shift",
+            "Shift positional parameters.",
+            "shift [n]",
+            &[],
+            &[
+                "Rename the positional parameters $N+1,$N+2 ... to $1,$2 ...  If N is",
+                "not given, it is assumed to be 1.",
+            ],
+            &[],
+            &[
+                "Returns success unless N is negative or greater than $#.",
+            ],
+        );
+
+        let expected = concat!(
+            "shift: shift [n]\n",
+            "    Shift positional parameters.\n",
+            "    \n",
+            "    Rename the positional parameters $N+1,$N+2 ... to $1,$2 ...  If N is\n",
+            "    not given, it is assumed to be 1.\n",
+            "    \n",
+            "    Exit Status:\n",
+            "    Returns success unless N is negative or greater than $#.\n",
+        );
+        assert_eq!(def.help(), expected);
+    }
+
+    // ── Test against real `bash -c 'help return'` output ───────
+
+    #[test]
+    fn help_return_matches_bash() {
+        let def = make_def(
+            "return",
+            "Return from a shell function.",
+            "return [n]",
+            &[],
+            &[
+                "Causes a function or sourced script to exit with the return value",
+                "specified by N.  If N is omitted, the return status is that of the",
+                "last command executed within the function or script.",
+            ],
+            &[],
+            &[
+                "Returns N, or failure if the shell is not executing a function or script.",
+            ],
+        );
+
+        let expected = concat!(
+            "return: return [n]\n",
+            "    Return from a shell function.\n",
+            "    \n",
+            "    Causes a function or sourced script to exit with the return value\n",
+            "    specified by N.  If N is omitted, the return status is that of the\n",
+            "    last command executed within the function or script.\n",
+            "    \n",
+            "    Exit Status:\n",
+            "    Returns N, or failure if the shell is not executing a function or script.\n",
+        );
+        assert_eq!(def.help(), expected);
+    }
+
+    // ── Test multi-line flag descriptions (cd-style) ───────────
+
+    static CD_FLAGS: [FlagDef; 3] = [
+        FlagDef {
+            ch: 'L', kind: FlagKind::Bool, clears: &['P'], value_name: "",
+            desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
+        },
+        FlagDef {
+            ch: 'P', kind: FlagKind::Bool, clears: &['L'], value_name: "",
+            desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
+        },
+        FlagDef {
+            ch: 'e', kind: FlagKind::Bool, clears: &[], value_name: "",
+            desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
+        },
+    ];
+
+    #[test]
+    fn help_cd_multiline_flags() {
+        let def = make_def(
+            "cd",
+            "Change the shell working directory.",
+            "cd [-L|[-P [-e]]] [-@] [dir]",
+            &CD_FLAGS,
+            &[
+                "Change the current directory to DIR.  The default DIR is the value of the",
+                "HOME shell variable. If DIR is \"-\", it is converted to $OLDPWD.",
+                "",
+                "The variable CDPATH defines the search path for the directory containing",
+                "DIR.  Alternative directory names in CDPATH are separated by a colon (:).",
+                "A null directory name is the same as the current directory.  If DIR begins",
+                "with a slash (/), then CDPATH is not used.",
+                "",
+                "If the directory is not found, and the shell option `cdable_vars' is set,",
+                "the word is assumed to be  a variable name.  If that variable has a value,",
+                "its value is used for DIR.",
+            ],
+            &[
+                "The default is to follow symbolic links, as if `-L' were specified.",
+                "`..' is processed by removing the immediately previous pathname component",
+                "back to a slash or the beginning of DIR.",
+            ],
+            &[
+                "Returns 0 if the directory is changed, and if $PWD is set successfully when",
+                "-P is used; non-zero otherwise.",
+            ],
+        );
+
+        let help = def.help();
+        // Verify multi-line flag continuation uses \t\t
+        assert!(help.contains("  -L\tforce symbolic links to be followed: resolve symbolic\n"));
+        assert!(help.contains("\t\tlinks in DIR after processing instances of `..'\n"));
+        // Verify post-Options extra content
+        assert!(help.contains("    The default is to follow symbolic links"));
+        // Verify Exit Status
+        assert!(help.contains("    Exit Status:\n    Returns 0"));
+    }
+
+    // ── Test extra_help (echo-style tab-formatted content) ─────
+
+    #[test]
+    fn help_with_extra_tab_content() {
+        let def = make_def(
+            "echo",
+            "Write arguments to the standard output.",
+            "echo [-neE] [arg ...]",
+            &[],
+            &[
+                "Display the ARGs, separated by a single space character and followed by a",
+                "newline, on the standard output.",
+            ],
+            &[
+                "Options:",
+                "  -n\tdo not append a newline",
+                "  -e\tenable interpretation of the following backslash escapes",
+                "  -E\texplicitly suppress interpretation of backslash escapes",
+                "",
+                "`echo' interprets the following backslash-escaped characters:",
+                "  \\a\talert (bell)",
+                "  \\b\tbackspace",
+            ],
+            &[
+                "Returns success unless a write error occurs.",
+            ],
+        );
+
+        let help = def.help();
+        // First line
+        assert!(help.starts_with("echo: echo [-neE] [arg ...]\n"));
+        // No auto-generated Options (no flags)
+        assert!(!help.contains("    Options:\n    Options:"));
+        // Extra content has manual Options
+        assert!(help.contains("    Options:\n      -n\t"));
+        // Backslash table
+        assert!(help.contains("      \\a\talert (bell)\n"));
+        // Exit Status
+        assert!(help.contains("    Exit Status:\n    Returns success"));
+    }
+
+    // ── Test: usage() still works, short_doc only affects help ──
+
+    #[test]
+    fn usage_ignores_short_doc() {
+        let def = make_def("alias", "Define or display aliases.", "alias [-p] [name[=value] ... ]", &ALIAS_FLAGS, &[], &[], &[]);
+        assert_eq!(def.usage(), "alias [-p]");
+    }
+
+    #[test]
+    fn help_falls_back_to_usage_when_no_short_doc() {
+        let def = make_def("alias", "Define or display aliases.", "", &ALIAS_FLAGS, &[], &[], &[]);
+        assert!(def.help().starts_with("alias: alias [-p]\n"));
+    }
+
+    // ── Backward compat: existing static constructibility ──────
 
     #[test]
     fn command_def_is_const_constructible() {
         static DEF: CommandDef = CommandDef {
             name: "test",
             about: "",
+            short_doc: "",
             style: Style::Posix,
             on_unknown: OnUnknown::Reject,
             flags: &[],
@@ -152,6 +527,9 @@ mod tests {
             }],
             has_rest: false,
             tags: &[],
+            description: &[],
+            extra: &[],
+            exit_status: &[],
         };
         assert_eq!(DEF.name, "test");
         assert!(DEF.positionals.first().unwrap().required);
