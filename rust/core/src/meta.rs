@@ -160,9 +160,7 @@ impl CommandDef {
         }
 
         if !self.extra.is_empty() {
-            if !has_options {
-                push_empty(&mut out);
-            }
+            push_empty(&mut out);
             for line in self.extra {
                 push_body(&mut out, line);
             }
