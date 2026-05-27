@@ -1,0 +1,22 @@
+rust/core/src/meta.rs
+  s_d0684c1b7aa0ed::t_3586c7e44e8307 153-154,163-165
+  s_d0684c1b7aa0ed::t_cc469dff4d9b09 151
+rust/Cargo.toml
+  s_d0684c1b7aa0ed::t_79d70b959ca19f 6,16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "122f2d10c871147388d13c4893f245dfca3177b2",
+  "prompts": {},
+  "sessions": {
+    "s_d0684c1b7aa0ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4cbe00cc-1443-4071-95b0-c7bde8a0b9a3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
