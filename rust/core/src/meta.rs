@@ -148,9 +148,10 @@ impl CommandDef {
         }
 
         let printable: Vec<_> = self.flags.iter()
-            .filter(|f| !matches!(f.kind, FlagKind::Noop))
+            .filter(|f| !matches!(f.kind, FlagKind::Noop) && !f.desc.is_empty())
             .collect();
-        if !printable.is_empty() {
+        let has_options = !printable.is_empty();
+        if has_options {
             push_empty(&mut out);
             push_line(&mut out, INDENT, "Options:");
             for f in &printable {
@@ -159,7 +160,9 @@ impl CommandDef {
         }
 
         if !self.extra.is_empty() {
-            push_empty(&mut out);
+            if !has_options {
+                push_empty(&mut out);
+            }
             for line in self.extra {
                 push_body(&mut out, line);
             }
