@@ -602,4 +602,76 @@ mod tests {
         let help = BashCd::def().help();
         assert!(help.contains("    Exit Status:\n    Returns 0 if the directory is changed.\n"));
     }
+
+    // ── GNU style: long options, inference, permutation, help ────
+
+    #[derive(Command)]
+    #[command(name = "basename", style = "gnu", short_doc = "basename [-z] NAME [SUFFIX]")]
+    struct Basename {
+        /// support multiple arguments and treat each as a NAME
+        #[flag(short = 'a')]
+        multiple: bool,
+        /// remove a trailing SUFFIX; implies -a
+        #[flag(short = 's', value_name = "SUFFIX")]
+        suffix: Option<String>,
+        /// end each output line with NUL, not newline
+        #[flag(short = 'z')]
+        zero: bool,
+        names: Operands,
+    }
+
+    #[test]
+    fn gnu_derive_long_bool_and_operands() {
+        let cmd = Basename::parse(&["--multiple", "a", "b"]).unwrap();
+        assert!(cmd.multiple);
+        assert_eq!(cmd.names.len(), 2);
+        assert_eq!(cmd.names.get(0), Some("a"));
+    }
+
+    #[test]
+    fn gnu_derive_long_value_inline() {
+        let cmd = Basename::parse(&["--suffix=.txt", "x"]).unwrap();
+        assert_eq!(cmd.suffix.as_deref(), Some(".txt"));
+    }
+
+    #[test]
+    fn gnu_derive_long_value_separated() {
+        let cmd = Basename::parse(&["--suffix", ".txt", "x"]).unwrap();
+        assert_eq!(cmd.suffix.as_deref(), Some(".txt"));
+    }
+
+    #[test]
+    fn gnu_derive_prefix_inference() {
+        let cmd = Basename::parse(&["--mult", "x"]).unwrap();
+        assert!(cmd.multiple);
+    }
+
+    #[test]
+    fn gnu_derive_short_flags_still_work() {
+        let cmd = Basename::parse(&["-a", "-s", ".bak", "x"]).unwrap();
+        assert!(cmd.multiple);
+        assert_eq!(cmd.suffix.as_deref(), Some(".bak"));
+    }
+
+    #[test]
+    fn gnu_derive_permutes_flags_after_operands() {
+        let cmd = Basename::parse(&["x", "--zero", "y"]).unwrap();
+        assert!(cmd.zero);
+        assert_eq!(cmd.names.len(), 2);
+    }
+
+    #[test]
+    fn gnu_derive_help_format() {
+        let help = Basename::def().help();
+        assert!(help.starts_with("Usage: basename [-z] NAME [SUFFIX]\n"));
+        assert!(help.contains("  -a, --multiple\tsupport multiple arguments and treat each as a NAME\n"));
+        assert!(help.contains("  -s, --suffix=SUFFIX\tremove a trailing SUFFIX; implies -a\n"));
+        assert!(help.contains("      --help\tdisplay this help and exit\n"));
+    }
+
+    #[test]
+    fn gnu_derive_help_is_signalled() {
+        let result = Basename::parse(&["--help"]);
+        assert_eq!(result.err(), Some(ecmd::error::Error::HelpRequested));
+    }
 }

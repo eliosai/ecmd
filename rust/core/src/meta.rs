@@ -126,9 +126,12 @@ impl CommandDef {
         parts.join(" ")
     }
 
-    /// Bash-compatible help text: `name: SHORT_DOC` + 4-space indented body.
+    /// Help text in the command's style: bash-builtin for POSIX, GNU for Gnu.
     #[must_use]
     pub fn help(&self) -> String {
+        if self.style == Style::Gnu {
+            return self.gnu_help();
+        }
         let mut out = String::with_capacity(512);
 
         let sd = if self.short_doc.is_empty() {
@@ -176,6 +179,39 @@ impl CommandDef {
 
         out
     }
+
+    /// GNU coreutils-style help: `Usage:` line, about, then `-c, --long` options.
+    fn gnu_help(&self) -> String {
+        let mut out = String::with_capacity(256);
+        let usage = if self.short_doc.is_empty() { self.usage() } else { self.short_doc.to_owned() };
+        out.push_str("Usage: ");
+        out.push_str(&usage);
+        out.push('\n');
+        if !self.about.is_empty() {
+            out.push_str(self.about);
+            out.push('\n');
+        }
+        for line in self.description {
+            out.push_str(line);
+            out.push('\n');
+        }
+        self.push_gnu_options(&mut out);
+        for line in self.exit_status {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Append the GNU options block; `--help`/`--version` are always listed.
+    fn push_gnu_options(&self, out: &mut String) {
+        out.push('\n');
+        for f in self.flags.iter().filter(|f| !matches!(f.kind, FlagKind::Noop) && !f.desc.is_empty()) {
+            out.push_str(&gnu_flag_line(f));
+        }
+        out.push_str("      --help\tdisplay this help and exit\n");
+        out.push_str("      --version\toutput version information and exit\n");
+    }
 }
 
 fn push_line(out: &mut String, indent: &str, text: &str) {
@@ -221,6 +257,18 @@ fn push_flag(out: &mut String, f: &FlagDef) {
     }
 }
 
+/// One GNU option line: `  -c, --long[=VALUE]\tDESC`.
+fn gnu_flag_line(f: &FlagDef) -> String {
+    let head = if f.long.is_empty() {
+        format!("  -{}", f.ch)
+    } else if f.value_name.is_empty() {
+        format!("  -{}, --{}", f.ch, f.long)
+    } else {
+        format!("  -{}, --{}={}", f.ch, f.long, f.value_name)
+    };
+    format!("{head}\t{}\n", f.desc)
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests verify known structure")]
 mod tests {
@@ -256,7 +304,7 @@ mod tests {
     // ── Test against real `bash -c 'help alias'` output ────────
 
     static ALIAS_FLAGS: [FlagDef; 1] = [
-        FlagDef { ch: 'p', kind: FlagKind::Bool, clears: &[], desc: "print all defined aliases in a reusable format", value_name: "" },
+        FlagDef { ch: 'p', long: "", kind: FlagKind::Bool, clears: &[], desc: "print all defined aliases in a reusable format", value_name: "" },
     ];
 
     #[test]
@@ -401,15 +449,15 @@ mod tests {
 
     static CD_FLAGS: [FlagDef; 3] = [
         FlagDef {
-            ch: 'L', kind: FlagKind::Bool, clears: &['P'], value_name: "",
+            ch: 'L', long: "", kind: FlagKind::Bool, clears: &['P'], value_name: "",
             desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
         },
         FlagDef {
-            ch: 'P', kind: FlagKind::Bool, clears: &['L'], value_name: "",
+            ch: 'P', long: "", kind: FlagKind::Bool, clears: &['L'], value_name: "",
             desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
         },
         FlagDef {
-            ch: 'e', kind: FlagKind::Bool, clears: &[], value_name: "",
+            ch: 'e', long: "", kind: FlagKind::Bool, clears: &[], value_name: "",
             desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
         },
     ];
@@ -534,5 +582,74 @@ mod tests {
         };
         assert_eq!(DEF.name, "test");
         assert!(DEF.positionals.first().unwrap().required);
+    }
+
+    // ── GNU help formatting (Style::Gnu) ───────────────────────
+
+    static GNU_FLAGS: [FlagDef; 2] = [
+        FlagDef { ch: 'a', long: "multiple", kind: FlagKind::Bool, clears: &[], desc: "support multiple arguments and treat each as a NAME", value_name: "" },
+        FlagDef { ch: 's', long: "suffix", kind: FlagKind::Value, clears: &[], desc: "remove a trailing SUFFIX; implies -a", value_name: "SUFFIX" },
+    ];
+
+    #[test]
+    fn gnu_help_renders_usage_about_and_options() {
+        let def = CommandDef {
+            name: "basename",
+            about: "Print NAME with any leading directory components removed",
+            short_doc: "basename [-z] NAME [SUFFIX]",
+            style: Style::Gnu,
+            on_unknown: OnUnknown::Reject,
+            flags: &GNU_FLAGS,
+            positionals: &[],
+            has_rest: true,
+            tags: &[],
+            description: &[],
+            extra: &[],
+            exit_status: &[],
+        };
+        let help = def.help();
+        assert!(help.starts_with("Usage: basename [-z] NAME [SUFFIX]\n"));
+        assert!(help.contains("Print NAME with any leading directory components removed\n"));
+        assert!(help.contains("  -a, --multiple\tsupport multiple arguments and treat each as a NAME\n"));
+        assert!(help.contains("  -s, --suffix=SUFFIX\tremove a trailing SUFFIX; implies -a\n"));
+        assert!(help.contains("      --help\tdisplay this help and exit\n"));
+        assert!(help.contains("      --version\toutput version information and exit\n"));
+    }
+
+    #[test]
+    fn gnu_help_footer_present_without_flags() {
+        let def = CommandDef {
+            name: "true",
+            about: "do nothing, successfully",
+            short_doc: "true",
+            style: Style::Gnu,
+            on_unknown: OnUnknown::Reject,
+            flags: &[],
+            positionals: &[],
+            has_rest: false,
+            tags: &[],
+            description: &[],
+            extra: &[],
+            exit_status: &[],
+        };
+        let help = def.help();
+        assert!(help.contains("      --help\tdisplay this help and exit\n"));
+        assert!(help.contains("      --version\toutput version information and exit\n"));
+    }
+
+    #[test]
+    fn posix_help_stays_bash_formatted() {
+        let def = make_def(
+            "exit",
+            "Exit the shell.",
+            "exit [n]",
+            &[],
+            &["Exits the shell with a status of N."],
+            &[],
+            &[],
+        );
+        let help = def.help();
+        assert!(help.starts_with("exit: exit [n]\n"));
+        assert!(!help.contains("Usage:"));
     }
 }

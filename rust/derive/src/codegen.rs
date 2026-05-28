@@ -6,7 +6,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Data, Fields, Field, Ident};
 
-use crate::attrs::{CommandAttrs, extract_doc_comment, extract_doc_sections};
+use crate::attrs::{CommandAttrs, FlagAttrs, extract_doc_comment, extract_doc_sections};
 use crate::classify::{FieldRole, classify_field, field_ident};
 
 /// Classified field with its role pre-computed.
@@ -154,10 +154,11 @@ fn gen_parse(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream 
     let dispatch = gen_dispatch(fields);
     let positionals = gen_positionals(fields);
     let names: Vec<_> = fields.iter().map(|cf| cf.ident).collect();
+    let style = style_tokens(cmd);
 
     quote! {
         static FLAGS: &[::ecmd::parse::FlagDef] = &[#flag_defs];
-        let result = ::ecmd::parse::scan(args, FLAGS, #on_unknown)?;
+        let result = ::ecmd::parse::scan(args, FLAGS, #on_unknown, #style)?;
 
         #inits
 
@@ -178,19 +179,14 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
     let mut defs: Vec<TokenStream> = Vec::new();
 
     for cf in fields {
-        if let Some((ch, kind)) = flag_def_tokens(&cf.role) {
-            let clears: Vec<char> = resolve_clears(&cf.role, fields);
-            let desc = &cf.desc;
-            let value_name = flag_value_name(&cf.role);
-            defs.push(quote! {
-                ::ecmd::parse::FlagDef { ch: #ch, kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name }
-            });
+        if let Some(literal) = flag_def_literal(cf, fields, cmd) {
+            defs.push(literal);
         }
     }
 
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "" }
+            ::ecmd::parse::FlagDef { ch: #ch, long: "", kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "" }
         });
     }
 
@@ -318,17 +314,13 @@ fn gen_meta(
     let name = &cmd.name;
     let about = &sections.about;
     let short_doc = &cmd.short_doc;
-    let style = if cmd.style == "gnu" {
-        quote! { ::ecmd::style::Style::Gnu }
-    } else {
-        quote! { ::ecmd::style::Style::Posix }
-    };
+    let style = style_tokens(cmd);
     let on_unknown = if cmd.lenient {
         quote! { ::ecmd::parse::OnUnknown::PassThrough }
     } else {
         quote! { ::ecmd::parse::OnUnknown::Reject }
     };
-    let flag_metas = gen_flag_metas(fields);
+    let flag_metas = gen_flag_metas(cmd, fields);
     let pos_metas = gen_positional_metas(fields);
     let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
@@ -360,17 +352,48 @@ fn gen_meta(
     }
 }
 
-fn gen_flag_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let defs: Vec<_> = fields.iter().filter_map(|cf| {
-        let (ch, kind) = flag_def_tokens(&cf.role)?;
-        let clears: Vec<char> = resolve_clears(&cf.role, fields);
-        let desc = &cf.desc;
-        let value_name = flag_value_name(&cf.role);
-        Some(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name }
-        })
-    }).collect();
+fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
+    let defs: Vec<_> = fields.iter().filter_map(|cf| flag_def_literal(cf, fields, cmd)).collect();
     quote! { #(#defs),* }
+}
+
+/// One `FlagDef { … }` literal for a flag field, shared by parse and meta codegen.
+fn flag_def_literal(cf: &ClassifiedField<'_>, fields: &[ClassifiedField<'_>], cmd: &CommandAttrs) -> Option<TokenStream> {
+    let (ch, kind) = flag_def_tokens(&cf.role)?;
+    let clears: Vec<char> = resolve_clears(&cf.role, fields);
+    let desc = &cf.desc;
+    let value_name = flag_value_name(&cf.role);
+    let long = flag_long(cf, cmd);
+    Some(quote! {
+        ::ecmd::parse::FlagDef { ch: #ch, long: #long, kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name }
+    })
+}
+
+/// GNU long name for a flag: explicit `long=`, else kebab field name in gnu style, else empty.
+fn flag_long(cf: &ClassifiedField<'_>, cmd: &CommandAttrs) -> String {
+    if let Some(attrs) = flag_attrs(&cf.role)
+        && let Some(explicit) = &attrs.long
+    {
+        return explicit.clone();
+    }
+    if cmd.style == "gnu" {
+        return kebab(cf.ident);
+    }
+    String::new()
+}
+
+/// Convert a field ident to a kebab-case long name (`nchars_exact` → "nchars-exact").
+fn kebab(ident: &Ident) -> String {
+    ident.to_string().trim_matches('_').replace('_', "-")
+}
+
+/// The parsing style tokens for this command (Gnu when opted in, else Posix).
+fn style_tokens(cmd: &CommandAttrs) -> TokenStream {
+    if cmd.style == "gnu" {
+        quote! { ::ecmd::style::Style::Gnu }
+    } else {
+        quote! { ::ecmd::style::Style::Posix }
+    }
 }
 
 fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
@@ -431,6 +454,17 @@ const fn flag_char(role: &FieldRole) -> Option<char> {
         | FieldRole::ValuedFlag(a)
         | FieldRole::RepeatableValueFlag(a)
         | FieldRole::PolarValueFlag(a) => Some(a.short),
+        _ => None,
+    }
+}
+
+const fn flag_attrs(role: &FieldRole) -> Option<&FlagAttrs> {
+    match role {
+        FieldRole::BoolFlag(a)
+        | FieldRole::PolarityFlag(a)
+        | FieldRole::ValuedFlag(a)
+        | FieldRole::RepeatableValueFlag(a)
+        | FieldRole::PolarValueFlag(a) => Some(a),
         _ => None,
     }
 }

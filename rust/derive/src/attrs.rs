@@ -79,6 +79,7 @@ pub struct FlagAttrs {
     pub short: char,
     pub clears: Vec<Ident>,
     pub value_name: String,
+    pub long: Option<String>,
 }
 
 impl FlagAttrs {
@@ -90,6 +91,7 @@ impl FlagAttrs {
         let mut short = '\0';
         let mut clears = Vec::new();
         let mut value_name = String::new();
+        let mut long = None;
 
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("short") {
@@ -101,6 +103,8 @@ impl FlagAttrs {
                 clears.extend(idents);
             } else if meta.path.is_ident("value_name") {
                 value_name = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("long") {
+                long = Some(parse_lit_str(&meta)?);
             } else {
                 return Err(meta.error("unknown flag attribute"));
             }
@@ -111,7 +115,7 @@ impl FlagAttrs {
             return Err(syn::Error::new_spanned(attr, "missing `short` in #[flag(...)]"));
         }
 
-        Ok(Some(Self { short, clears, value_name }))
+        Ok(Some(Self { short, clears, value_name, long }))
     }
 }
 

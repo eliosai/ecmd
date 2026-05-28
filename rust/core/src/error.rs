@@ -24,6 +24,14 @@ pub enum Error {
     },
     /// An unrecognized subcommand name was provided.
     UnknownCommand(String),
+    /// An abbreviated long option matched more than one declared option.
+    AmbiguousOption(String),
+    /// A flag that takes no value was given one via `--flag=value`.
+    UnexpectedValue(String),
+    /// `--help` was requested; the caller should print help and exit 0.
+    HelpRequested,
+    /// `--version` was requested; the caller should print the version and exit 0.
+    VersionRequested,
 }
 
 impl fmt::Display for Error {
@@ -42,6 +50,12 @@ impl fmt::Display for Error {
                 reason,
             } => write!(f, "{flag}: {value}: {reason}"),
             Self::UnknownCommand(name) => write!(f, "{name}: unknown command"),
+            Self::AmbiguousOption(name) => write!(f, "{name}: option is ambiguous"),
+            Self::UnexpectedValue(name) => {
+                write!(f, "{name}: option doesn't allow an argument")
+            }
+            Self::HelpRequested => write!(f, "help requested"),
+            Self::VersionRequested => write!(f, "version requested"),
         }
     }
 }
