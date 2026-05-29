@@ -93,37 +93,37 @@ impl CommandDef {
     /// Auto-generate a usage string like `cd [-LP] [dir]`.
     #[must_use]
     pub fn usage(&self) -> String {
-        let mut parts = Vec::new();
-        parts.push(self.name.to_owned());
-
-        let bool_chars: String = self.flags.iter()
-            .filter(|f| matches!(f.kind, FlagKind::Bool | FlagKind::Polar | FlagKind::Noop))
-            .map(|f| f.ch)
-            .collect();
-        if !bool_chars.is_empty() {
-            parts.push(format!("[-{bool_chars}]"));
-        }
-
-        for f in self.flags {
-            if matches!(f.kind, FlagKind::Value | FlagKind::PolarValue) {
-                let vn = if f.value_name.is_empty() { "ARG" } else { f.value_name };
-                parts.push(format!("[-{} {vn}]", f.ch));
-            }
-        }
-
+        let mut parts = vec![self.name.to_owned()];
+        parts.extend(self.flag_usage());
         for p in self.positionals {
-            if p.required {
-                parts.push(p.name.to_owned());
-            } else {
-                parts.push(format!("[{}]", p.name));
-            }
+            parts.push(if p.required { p.name.to_owned() } else { format!("[{}]", p.name) });
         }
-
         if self.has_rest {
             parts.push("[args...]".to_owned());
         }
-
         parts.join(" ")
+    }
+
+    /// Flag fragments for the usage line; long-only flags show as `[--long]`.
+    fn flag_usage(&self) -> Vec<String> {
+        let mut parts = Vec::new();
+        let shorts: String = self.flags.iter()
+            .filter(|f| matches!(f.kind, FlagKind::Bool | FlagKind::Polar | FlagKind::Noop) && !is_synthetic(f.ch))
+            .map(|f| f.ch)
+            .collect();
+        if !shorts.is_empty() {
+            parts.push(format!("[-{shorts}]"));
+        }
+        for f in self.flags {
+            let vn = if f.value_name.is_empty() { "ARG" } else { f.value_name };
+            if matches!(f.kind, FlagKind::Value | FlagKind::PolarValue) && !is_synthetic(f.ch) {
+                parts.push(format!("[-{} {vn}]", f.ch));
+            } else if !f.long.is_empty() && is_synthetic(f.ch) {
+                let val = if f.value_name.is_empty() { String::new() } else { format!("={}", f.value_name) };
+                parts.push(format!("[--{}{val}]", f.long));
+            }
+        }
+        parts
     }
 
     /// Help text in the command's style: bash-builtin for POSIX, GNU for Gnu.
@@ -257,16 +257,23 @@ fn push_flag(out: &mut String, f: &FlagDef) {
     }
 }
 
-/// One GNU option line: `  -c, --long[=VALUE]\tDESC`.
+/// One GNU option line: `  -c, --long[=VALUE]\tDESC`, or `      --long` when long-only.
 fn gnu_flag_line(f: &FlagDef) -> String {
-    let head = if f.long.is_empty() {
+    let value = if f.value_name.is_empty() { String::new() } else { format!("={}", f.value_name) };
+    let head = if is_synthetic(f.ch) {
+        format!("      --{}{value}", f.long)
+    } else if f.long.is_empty() {
         format!("  -{}", f.ch)
-    } else if f.value_name.is_empty() {
-        format!("  -{}, --{}", f.ch, f.long)
     } else {
-        format!("  -{}, --{}={}", f.ch, f.long, f.value_name)
+        format!("  -{}, --{}{value}", f.ch, f.long)
     };
     format!("{head}\t{}\n", f.desc)
+}
+
+/// Long-only flags carry a synthetic identity codepoint (>= U+E000); real
+/// short flags are byte-derived (<= U+00FF), so the ranges never overlap.
+const fn is_synthetic(ch: char) -> bool {
+    ch >= '\u{E000}'
 }
 
 #[cfg(test)]

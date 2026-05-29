@@ -15,6 +15,8 @@ struct ClassifiedField<'a> {
     ident: &'a Ident,
     role: FieldRole,
     desc: String,
+    /// Identity char: the short flag, or a private-use codepoint for long-only.
+    id: char,
 }
 
 /// Main expansion entry point.
@@ -56,11 +58,22 @@ fn extract_named_fields(input: &DeriveInput) -> syn::Result<&syn::punctuated::Pu
 }
 
 fn classify_all(fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>) -> syn::Result<Vec<ClassifiedField<'_>>> {
-    fields.iter().map(|f| {
+    fields.iter().enumerate().map(|(i, f)| {
         let role = classify_field(f)?;
         let desc = extract_doc_comment(&f.attrs);
-        Ok(ClassifiedField { field: f, ident: field_ident(f), role, desc })
+        let id = field_id(&role, i);
+        Ok(ClassifiedField { field: f, ident: field_ident(f), role, desc, id })
     }).collect()
+}
+
+/// A flag's identity char: its short, or a private-use codepoint for long-only.
+fn field_id(role: &FieldRole, index: usize) -> char {
+    match flag_attrs(role) {
+        Some(a) if a.short != '\0' => a.short,
+        Some(_) => char::from_u32(0xE000_u32.saturating_add(u32::try_from(index).unwrap_or(0)))
+            .unwrap_or('\u{E000}'),
+        None => '\0',
+    }
 }
 
 // ── Validation ──────────────────────────────────────────────────
@@ -91,11 +104,9 @@ fn check_positional_ordering(fields: &[ClassifiedField<'_>]) -> syn::Result<()> 
 fn check_duplicate_flags(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
     let mut seen = HashSet::new();
     for cf in fields {
-        if let Some(ch) = flag_char(&cf.role)
-            && !seen.insert(ch)
-        {
+        if cf.id != '\0' && !seen.insert(cf.id) {
             return Err(syn::Error::new_spanned(
-                cf.field, format!("duplicate flag character '{ch}'"),
+                cf.field, format!("duplicate flag '{}'", cf.id),
             ));
         }
     }
@@ -155,10 +166,11 @@ fn gen_parse(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream 
     let positionals = gen_positionals(fields);
     let names: Vec<_> = fields.iter().map(|cf| cf.ident).collect();
     let style = style_tokens(cmd);
+    let permute = !cmd.no_permute;
 
     quote! {
         static FLAGS: &[::ecmd::parse::FlagDef] = &[#flag_defs];
-        let result = ::ecmd::parse::scan(args, FLAGS, #on_unknown, #style)?;
+        let result = ::ecmd::parse::scan(args, FLAGS, #on_unknown, #style, #permute)?;
 
         #inits
 
@@ -220,29 +232,29 @@ fn gen_single_dispatch(cf: &ClassifiedField<'_>, all: &[ClassifiedField<'_>]) ->
     let id = cf.ident;
     match &cf.role {
         FieldRole::BoolFlag(attrs) => {
-            let ch = attrs.short;
+            let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! { ::ecmd::parse::Parsed::Bool(#ch) => { #id = true; #resets } })
         }
         FieldRole::PolarityFlag(attrs) => {
-            let ch = attrs.short;
+            let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! { ::ecmd::parse::Parsed::Polar(#ch, p) => { #id = *p; #resets } })
         }
         FieldRole::ValuedFlag(attrs) => {
-            let ch = attrs.short;
+            let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let assign = gen_value_assign(id, cf.field, ch);
             Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #assign #resets } })
         }
         FieldRole::RepeatableValueFlag(attrs) => {
-            let ch = attrs.short;
+            let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let push = gen_repeatable_push(id, cf.field, ch);
             Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #push #resets } })
         }
         FieldRole::PolarValueFlag(attrs) => {
-            let ch = attrs.short;
+            let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! {
                 ::ecmd::parse::Parsed::PolarValue(#ch, p, v) => {
@@ -359,7 +371,8 @@ fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenSt
 
 /// One `FlagDef { … }` literal for a flag field, shared by parse and meta codegen.
 fn flag_def_literal(cf: &ClassifiedField<'_>, fields: &[ClassifiedField<'_>], cmd: &CommandAttrs) -> Option<TokenStream> {
-    let (ch, kind) = flag_def_tokens(&cf.role)?;
+    let (_, kind) = flag_def_tokens(&cf.role)?;
+    let ch = cf.id;
     let clears: Vec<char> = resolve_clears(&cf.role, fields);
     let desc = &cf.desc;
     let value_name = flag_value_name(&cf.role);
@@ -494,7 +507,7 @@ fn flag_def_tokens(role: &FieldRole) -> Option<(char, TokenStream)> {
 
 fn resolve_clears(role: &FieldRole, all: &[ClassifiedField<'_>]) -> Vec<char> {
     clears_targets(role).iter().filter_map(|target| {
-        all.iter().find(|cf| cf.ident == target).and_then(|cf| flag_char(&cf.role))
+        all.iter().find(|cf| cf.ident == target).map(|cf| cf.id)
     }).collect()
 }
 

@@ -674,4 +674,57 @@ mod tests {
         let result = Basename::parse(&["--help"]);
         assert_eq!(result.err(), Some(ecmd::error::Error::HelpRequested));
     }
+
+    // ── Long-only options (a long name with no short char) ───────
+
+    #[derive(Command)]
+    #[command(name = "paint", style = "gnu")]
+    struct Paint {
+        /// colorize the output
+        #[flag(long = "color")]
+        color: bool,
+        /// be verbose
+        #[flag(short = 'v')]
+        verbose: bool,
+        /// tint with HUE
+        #[flag(long = "tint", value_name = "HUE")]
+        tint: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn long_only_flag_sets_field() {
+        let cmd = Paint::parse(&["--color", "a"]).unwrap();
+        assert!(cmd.color);
+        assert!(!cmd.verbose);
+        assert_eq!(cmd.files.len(), 1);
+    }
+
+    #[test]
+    fn long_only_coexists_with_short_sibling() {
+        let cmd = Paint::parse(&["-v", "--color", "x"]).unwrap();
+        assert!(cmd.verbose);
+        assert!(cmd.color);
+    }
+
+    #[test]
+    fn long_only_prefix_inference() {
+        let cmd = Paint::parse(&["--col", "x"]).unwrap();
+        assert!(cmd.color);
+    }
+
+    #[test]
+    fn long_only_valued_flag() {
+        let cmd = Paint::parse(&["--tint=red", "x"]).unwrap();
+        assert_eq!(cmd.tint.as_deref(), Some("red"));
+    }
+
+    #[test]
+    fn long_only_usage_has_no_synthetic_char() {
+        let usage = Paint::def().usage();
+        assert!(!usage.contains('\u{E000}'), "synthetic char leaked: {usage}");
+        assert!(usage.contains("[--color]"), "usage: {usage}");
+        assert!(usage.contains("[--tint=HUE]"), "usage: {usage}");
+        assert!(usage.contains("[-v]"), "usage: {usage}");
+    }
 }

@@ -13,6 +13,7 @@ pub struct CommandAttrs {
     pub tags: Vec<(String, String)>,
     pub short_doc: String,
     pub extra_help: Vec<String>,
+    pub no_permute: bool,
 }
 
 impl CommandAttrs {
@@ -24,6 +25,7 @@ impl CommandAttrs {
         let mut tags = Vec::new();
         let mut short_doc = String::new();
         let mut extra_help = Vec::new();
+        let mut no_permute = false;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("command")) {
             attr.parse_nested_meta(|meta| {
@@ -33,6 +35,8 @@ impl CommandAttrs {
                     style = parse_lit_str(&meta)?;
                 } else if meta.path.is_ident("lenient") {
                     lenient = true;
+                } else if meta.path.is_ident("no_permute") {
+                    no_permute = true;
                 } else if meta.path.is_ident("noop") {
                     noop = parse_lit_str(&meta)?;
                 } else if meta.path.is_ident("short_doc") {
@@ -70,7 +74,7 @@ impl CommandAttrs {
             return Err(syn::Error::new(span, "missing #[command(name = \"...\")]"));
         }
 
-        Ok(Self { name, style, lenient, noop, tags, short_doc, extra_help })
+        Ok(Self { name, style, lenient, noop, tags, short_doc, extra_help, no_permute })
     }
 }
 
@@ -111,8 +115,11 @@ impl FlagAttrs {
             Ok(())
         })?;
 
-        if short == '\0' {
-            return Err(syn::Error::new_spanned(attr, "missing `short` in #[flag(...)]"));
+        if short == '\0' && long.is_none() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[flag(...)] needs `short` or `long`",
+            ));
         }
 
         Ok(Some(Self { short, clears, value_name, long }))
