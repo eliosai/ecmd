@@ -1,0 +1,48 @@
+rust/core/src/meta.rs
+  s_e2bbd5f5356fd4::t_4bea1d9d93cfc3 96-105,107-111,114-115,118-119,121-123,126
+  s_e2bbd5f5356fd4::t_e489e87bd91658 260,262-265,268
+  s_e2bbd5f5356fd4::t_351fc9b3af1e42 273-274,276
+  s_e2bbd5f5356fd4::t_b57c490dd0a131 275
+rust/derive/src/codegen.rs
+  s_e2bbd5f5356fd4::t_9139ee5b289bbd 61,64-65,69-72,75-76
+  s_e2bbd5f5356fd4::t_637b58ed386fde 235,240,245,251,257
+  s_e2bbd5f5356fd4::t_20dd5fb70d9c88 18-19
+  s_e2bbd5f5356fd4::t_4fe9467e1d018f 107,109
+  s_e2bbd5f5356fd4::t_ca43d39b13e425 510
+  s_e2bbd5f5356fd4::t_d732380e1959af 73-74
+  s_e2bbd5f5356fd4::t_12c19bdd5581f7 374-375
+  s_e2bbd5f5356fd4::t_d87704482b30c1 169,173
+rust/derive/src/attrs.rs
+  s_e2bbd5f5356fd4::t_c72ec5218fbf4e 16
+  s_e2bbd5f5356fd4::t_8c88af7570d02b 77
+  s_e2bbd5f5356fd4::t_b94abf9913ed6d 118-122
+  s_e2bbd5f5356fd4::t_ee61175db9a6a1 28,38-39
+rust/core/src/parse.rs
+  s_e2bbd5f5356fd4::t_fb81d1588e54a7 94
+  s_e2bbd5f5356fd4::t_16708afeceb81f 822-839
+  s_e2bbd5f5356fd4::t_760117f359fd9d 118-120
+  s_e2bbd5f5356fd4::t_0b534499cf9571 43
+  s_e2bbd5f5356fd4::t_21167c69fd8bed 564,572,580,588
+  s_e2bbd5f5356fd4::t_d804212c2e70bc 673,681,688,695,702,710,717,724,731,739,746,752,758,764,770,777,783,791,799,802,809,816
+  s_e2bbd5f5356fd4::t_d6957f7fa84def 450,458,466,477,485,493,501,509,517,524,535,546,557,596,603,610,617,624,631,639,647,655,844
+rust/tests/src/lib.rs
+  s_e2bbd5f5356fd4::t_bca9b458b8bcd3 715-729
+  s_e2bbd5f5356fd4::t_2d1284ede777ab 689-691
+  s_e2bbd5f5356fd4::t_86f7fe4cd05f60 677-688,692-714
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5990c29802ecc477f3e9c7542f6c6b7ffe23bd9b",
+  "prompts": {},
+  "sessions": {
+    "s_e2bbd5f5356fd4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "33d3b825-0c65-4d3f-93e0-66cd61e09c93",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "jsmey7 <joshua.smotritsky@gmail.com>"
+    }
+  }
+}
