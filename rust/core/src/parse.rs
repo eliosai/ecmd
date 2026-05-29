@@ -44,6 +44,8 @@ pub struct FlagDef {
     pub ch: char,
     /// The GNU long name without dashes (e.g., "verbose"); empty if short-only.
     pub long: &'static str,
+    /// Extra long names resolving to this flag (e.g. "silent" aliasing "quiet").
+    pub aliases: &'static [&'static str],
     /// What kind of flag this is.
     pub kind: FlagKind,
     /// Flags cleared when this one fires (last-wins mutex).
@@ -52,6 +54,8 @@ pub struct FlagDef {
     pub desc: &'static str,
     /// Value placeholder (empty for bool flags, e.g. "PATH" for valued).
     pub value_name: &'static str,
+    /// When true, omit from generated help (still parseable).
+    pub hidden: bool,
 }
 
 /// Result of parsing a single flag occurrence.
@@ -112,7 +116,7 @@ pub fn scan(
             ArgClass::Flags(polarity, chars) => {
                 process_cluster(
                     chars, polarity, &mut cursor, flags, on_unknown,
-                    &mut result,
+                    style, &mut result,
                 )?;
             }
             // GNU permutation: an operand does not stop option scanning. With
@@ -210,12 +214,13 @@ fn process_cluster(
     cursor: &mut Cursor<'_>,
     flags: &[FlagDef],
     on_unknown: OnUnknown,
+    style: Style,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     if try_passthrough(chars, cursor, flags, on_unknown, &mut result.operands) {
         return Ok(());
     }
-    parse_known_cluster(chars, polarity, cursor, flags, result)
+    parse_known_cluster(chars, polarity, cursor, flags, style, result)
 }
 
 fn try_passthrough(
@@ -256,6 +261,7 @@ fn parse_known_cluster(
     polarity: Polarity,
     cursor: &mut Cursor<'_>,
     flags: &[FlagDef],
+    _style: Style,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     for (bi, &byte) in chars.as_bytes().iter().enumerate() {
@@ -292,7 +298,8 @@ fn extract_value(
     let remainder = chars.get(after..).unwrap_or_default();
     if !remainder.is_empty() {
         cursor.advance();
-        return Ok(remainder.to_owned());
+        // clap parity: a single leading `=` is the attached-value separator (`-c=5` → `5`).
+        return Ok(remainder.strip_prefix('=').unwrap_or(remainder).to_owned());
     }
     cursor.next_value(flag_ch)
 }
@@ -383,7 +390,7 @@ fn apply_long_value(
 /// Exact match wins; otherwise fall back to unambiguous-prefix inference.
 fn resolve_long<'a>(name: &str, flags: &'a [FlagDef]) -> LongMatch<'a> {
     if !name.is_empty()
-        && let Some(def) = flags.iter().find(|f| f.long == name)
+        && let Some(def) = flags.iter().find(|f| f.long == name || f.aliases.contains(&name))
     {
         return LongMatch::Flag(def);
     }
@@ -394,6 +401,13 @@ fn resolve_long<'a>(name: &str, flags: &'a [FlagDef]) -> LongMatch<'a> {
     }
 }
 
+/// Every long name a flag answers to: its primary long plus any aliases.
+fn long_names(flag: &FlagDef) -> impl Iterator<Item = &'static str> + '_ {
+    core::iter::once(flag.long)
+        .chain(flag.aliases.iter().copied())
+        .filter(|n| !n.is_empty())
+}
+
 /// Collect every declared long (plus reserved help/version) prefixed by `name`.
 fn infer_long<'a>(name: &str, flags: &'a [FlagDef]) -> LongMatch<'a> {
     if name.is_empty() {
@@ -401,13 +415,16 @@ fn infer_long<'a>(name: &str, flags: &'a [FlagDef]) -> LongMatch<'a> {
     }
     let mut found = LongMatch::Unknown;
     let mut count = 0_u32;
-    for def in flags.iter().filter(|f| !f.long.is_empty() && f.long.starts_with(name)) {
-        found = LongMatch::Flag(def);
-        count = count.saturating_add(1);
+    for def in flags {
+        // A flag matched by several of its own names (long + alias) still counts once.
+        if long_names(def).any(|n| n.starts_with(name)) {
+            found = LongMatch::Flag(def);
+            count = count.saturating_add(1);
+        }
     }
     for (reserved, hit) in [("help", LongMatch::Help), ("version", LongMatch::Version)] {
         // A flag that owns this exact long name shadows the reserved option.
-        if reserved.starts_with(name) && !flags.iter().any(|f| f.long == reserved) {
+        if reserved.starts_with(name) && !flags.iter().any(|f| long_names(f).any(|n| n == reserved)) {
             found = hit;
             count = count.saturating_add(1);
         }
@@ -430,19 +447,19 @@ mod tests {
     use crate::style::Style;
 
     fn bool_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Bool, long: "", clears: &[], desc: "", value_name: "" }
+        FlagDef { ch, kind: FlagKind::Bool, long: "", aliases: &[], clears: &[], desc: "", value_name: "", hidden: false }
     }
 
     fn value_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Value, long: "", clears: &[], desc: "", value_name: "" }
+        FlagDef { ch, kind: FlagKind::Value, long: "", aliases: &[], clears: &[], desc: "", value_name: "", hidden: false }
     }
 
     fn polar_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Polar, long: "", clears: &[], desc: "", value_name: "" }
+        FlagDef { ch, kind: FlagKind::Polar, long: "", aliases: &[], clears: &[], desc: "", value_name: "", hidden: false }
     }
 
     fn noop_flag(ch: char) -> FlagDef {
-        FlagDef { ch, kind: FlagKind::Noop, long: "", clears: &[], desc: "", value_name: "" }
+        FlagDef { ch, kind: FlagKind::Noop, long: "", aliases: &[], clears: &[], desc: "", value_name: "", hidden: false }
     }
 
     #[test]
@@ -509,6 +526,28 @@ mod tests {
         let r = scan(&["-ofile"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
         assert_eq!(r.flags, [Parsed::Value('o', "file".into())]);
         assert!(r.operands.is_empty());
+    }
+
+    #[test]
+    fn valued_flag_stuck_strips_equals_separator() {
+        let flags = [value_flag('o')];
+        let r = scan(&["-o=file"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
+        assert_eq!(r.flags, [Parsed::Value('o', "file".into())]);
+        assert!(r.operands.is_empty());
+    }
+
+    #[test]
+    fn valued_flag_stuck_strips_only_one_equals() {
+        let flags = [value_flag('o')];
+        let r = scan(&["-o==file"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
+        assert_eq!(r.flags, [Parsed::Value('o', "=file".into())]);
+    }
+
+    #[test]
+    fn valued_flag_stuck_bare_equals_is_empty_value() {
+        let flags = [value_flag('o')];
+        let r = scan(&["-o="], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
+        assert_eq!(r.flags, [Parsed::Value('o', String::new())]);
     }
 
     #[test]
@@ -635,7 +674,7 @@ mod tests {
 
     #[test]
     fn polar_value_on() {
-        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, long: "", clears: &[], desc: "", value_name: "" }];
+        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, long: "", aliases: &[], clears: &[], desc: "", value_name: "", hidden: false }];
         let r = scan(&["-o", "errexit"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
         assert_eq!(r.flags, [Parsed::PolarValue('o', Polarity::On, "errexit".into())]);
         assert!(r.operands.is_empty());
@@ -643,7 +682,7 @@ mod tests {
 
     #[test]
     fn polar_value_off() {
-        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, long: "", clears: &[], desc: "", value_name: "" }];
+        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, long: "", aliases: &[], clears: &[], desc: "", value_name: "", hidden: false }];
         let r = scan(&["+o", "verbose"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
         assert_eq!(r.flags, [Parsed::PolarValue('o', Polarity::Off, "verbose".into())]);
         assert!(r.operands.is_empty());
@@ -651,7 +690,7 @@ mod tests {
 
     #[test]
     fn polar_value_stuck() {
-        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, long: "", clears: &[], desc: "", value_name: "" }];
+        let flags = [FlagDef { ch: 'o', kind: FlagKind::PolarValue, long: "", aliases: &[], clears: &[], desc: "", value_name: "", hidden: false }];
         let r = scan(&["-oerrexit"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
         assert_eq!(r.flags, [Parsed::PolarValue('o', Polarity::On, "errexit".into())]);
         assert!(r.operands.is_empty());
@@ -660,11 +699,11 @@ mod tests {
     // ── GNU long options (Style::Gnu) ───────────────────────────
 
     fn long_bool(ch: char, long: &'static str) -> FlagDef {
-        FlagDef { ch, long, kind: FlagKind::Bool, clears: &[], desc: "", value_name: "" }
+        FlagDef { ch, long, aliases: &[], kind: FlagKind::Bool, clears: &[], desc: "", value_name: "", hidden: false }
     }
 
     fn long_value(ch: char, long: &'static str) -> FlagDef {
-        FlagDef { ch, long, kind: FlagKind::Value, clears: &[], desc: "", value_name: "" }
+        FlagDef { ch, long, aliases: &[], kind: FlagKind::Value, clears: &[], desc: "", value_name: "", hidden: false }
     }
 
     #[test]
@@ -843,5 +882,41 @@ mod tests {
         let flags = [long_bool('a', "multiple")];
         let e = scan(&["--multiple"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap_err();
         assert_eq!(e, Error::UnknownFlag("--".into()));
+    }
+
+    fn aliased_bool(ch: char, long: &'static str, aliases: &'static [&'static str]) -> FlagDef {
+        FlagDef { ch, long, aliases, kind: FlagKind::Bool, clears: &[], desc: "", value_name: "", hidden: false }
+    }
+
+    #[test]
+    fn gnu_alias_resolves_to_flag() {
+        let flags = [aliased_bool('q', "quiet", &["silent"])];
+        let r = scan(&["--silent"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
+        assert_eq!(r.flags, [Parsed::Bool('q')]);
+    }
+
+    #[test]
+    fn gnu_alias_prefix_infers() {
+        let flags = [aliased_bool('q', "quiet", &["silent"])];
+        let r = scan(&["--si"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
+        assert_eq!(r.flags, [Parsed::Bool('q')]);
+        let r2 = scan(&["--s"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
+        assert_eq!(r2.flags, [Parsed::Bool('q')]);
+    }
+
+    #[test]
+    fn gnu_alias_and_long_prefix_counts_flag_once() {
+        // "--qu" matches the long "quiet"; the flag must not register as ambiguous
+        // just because it also owns the "silent" alias.
+        let flags = [aliased_bool('q', "quiet", &["silent"])];
+        let r = scan(&["--qu"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
+        assert_eq!(r.flags, [Parsed::Bool('q')]);
+    }
+
+    #[test]
+    fn gnu_hidden_flag_still_parses() {
+        let flags = [FlagDef { ch: '\u{E000}', long: "presume-input-pipe", aliases: &[], kind: FlagKind::Bool, clears: &[], desc: "", value_name: "", hidden: true }];
+        let r = scan(&["--presume-input-pipe"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
+        assert_eq!(r.flags, [Parsed::Bool('\u{E000}')]);
     }
 }

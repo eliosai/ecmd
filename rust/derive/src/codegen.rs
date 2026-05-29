@@ -198,7 +198,7 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
 
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "" }
+            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false }
         });
     }
 
@@ -377,9 +377,16 @@ fn flag_def_literal(cf: &ClassifiedField<'_>, fields: &[ClassifiedField<'_>], cm
     let desc = &cf.desc;
     let value_name = flag_value_name(&cf.role);
     let long = flag_long(cf, cmd);
+    let aliases = flag_aliases(&cf.role);
+    let hidden = flag_attrs(&cf.role).is_some_and(|a| a.hidden);
     Some(quote! {
-        ::ecmd::parse::FlagDef { ch: #ch, long: #long, kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name }
+        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden }
     })
+}
+
+/// Alias long names declared via `#[flag(alias = "…")]`.
+fn flag_aliases(role: &FieldRole) -> Vec<String> {
+    flag_attrs(role).map(|a| a.aliases.clone()).unwrap_or_default()
 }
 
 /// GNU long name for a flag: explicit `long=`, else kebab field name in gnu style, else empty.

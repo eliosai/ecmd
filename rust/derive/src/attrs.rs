@@ -84,6 +84,8 @@ pub struct FlagAttrs {
     pub clears: Vec<Ident>,
     pub value_name: String,
     pub long: Option<String>,
+    pub aliases: Vec<String>,
+    pub hidden: bool,
 }
 
 impl FlagAttrs {
@@ -96,6 +98,8 @@ impl FlagAttrs {
         let mut clears = Vec::new();
         let mut value_name = String::new();
         let mut long = None;
+        let mut aliases = Vec::new();
+        let mut hidden = false;
 
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("short") {
@@ -109,6 +113,10 @@ impl FlagAttrs {
                 value_name = parse_lit_str(&meta)?;
             } else if meta.path.is_ident("long") {
                 long = Some(parse_lit_str(&meta)?);
+            } else if meta.path.is_ident("alias") {
+                aliases.push(parse_lit_str(&meta)?);
+            } else if meta.path.is_ident("hide") {
+                hidden = true;
             } else {
                 return Err(meta.error("unknown flag attribute"));
             }
@@ -122,7 +130,7 @@ impl FlagAttrs {
             ));
         }
 
-        Ok(Some(Self { short, clears, value_name, long }))
+        Ok(Some(Self { short, clears, value_name, long, aliases, hidden }))
     }
 }
 

@@ -108,13 +108,13 @@ impl CommandDef {
     fn flag_usage(&self) -> Vec<String> {
         let mut parts = Vec::new();
         let shorts: String = self.flags.iter()
-            .filter(|f| matches!(f.kind, FlagKind::Bool | FlagKind::Polar | FlagKind::Noop) && !is_synthetic(f.ch))
+            .filter(|f| matches!(f.kind, FlagKind::Bool | FlagKind::Polar | FlagKind::Noop) && !is_synthetic(f.ch) && !f.hidden)
             .map(|f| f.ch)
             .collect();
         if !shorts.is_empty() {
             parts.push(format!("[-{shorts}]"));
         }
-        for f in self.flags {
+        for f in self.flags.iter().filter(|f| !f.hidden) {
             let vn = if f.value_name.is_empty() { "ARG" } else { f.value_name };
             if matches!(f.kind, FlagKind::Value | FlagKind::PolarValue) && !is_synthetic(f.ch) {
                 parts.push(format!("[-{} {vn}]", f.ch));
@@ -151,7 +151,7 @@ impl CommandDef {
         }
 
         let printable: Vec<_> = self.flags.iter()
-            .filter(|f| !matches!(f.kind, FlagKind::Noop) && !f.desc.is_empty())
+            .filter(|f| !matches!(f.kind, FlagKind::Noop) && !f.desc.is_empty() && !f.hidden)
             .collect();
         let has_options = !printable.is_empty();
         if has_options {
@@ -206,7 +206,7 @@ impl CommandDef {
     /// Append the GNU options block; `--help`/`--version` are always listed.
     fn push_gnu_options(&self, out: &mut String) {
         out.push('\n');
-        for f in self.flags.iter().filter(|f| !matches!(f.kind, FlagKind::Noop) && !f.desc.is_empty()) {
+        for f in self.flags.iter().filter(|f| !matches!(f.kind, FlagKind::Noop) && !f.desc.is_empty() && !f.hidden) {
             out.push_str(&gnu_flag_line(f));
         }
         out.push_str("      --help\tdisplay this help and exit\n");
@@ -311,7 +311,7 @@ mod tests {
     // ── Test against real `bash -c 'help alias'` output ────────
 
     static ALIAS_FLAGS: [FlagDef; 1] = [
-        FlagDef { ch: 'p', long: "", kind: FlagKind::Bool, clears: &[], desc: "print all defined aliases in a reusable format", value_name: "" },
+        FlagDef { ch: 'p', long: "", aliases: &[], kind: FlagKind::Bool, clears: &[], desc: "print all defined aliases in a reusable format", value_name: "", hidden: false },
     ];
 
     #[test]
@@ -456,15 +456,15 @@ mod tests {
 
     static CD_FLAGS: [FlagDef; 3] = [
         FlagDef {
-            ch: 'L', long: "", kind: FlagKind::Bool, clears: &['P'], value_name: "",
+            ch: 'L', long: "", aliases: &[], kind: FlagKind::Bool, clears: &['P'], value_name: "", hidden: false,
             desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
         },
         FlagDef {
-            ch: 'P', long: "", kind: FlagKind::Bool, clears: &['L'], value_name: "",
+            ch: 'P', long: "", aliases: &[], kind: FlagKind::Bool, clears: &['L'], value_name: "", hidden: false,
             desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
         },
         FlagDef {
-            ch: 'e', long: "", kind: FlagKind::Bool, clears: &[], value_name: "",
+            ch: 'e', long: "", aliases: &[], kind: FlagKind::Bool, clears: &[], value_name: "", hidden: false,
             desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
         },
     ];
@@ -594,8 +594,8 @@ mod tests {
     // ── GNU help formatting (Style::Gnu) ───────────────────────
 
     static GNU_FLAGS: [FlagDef; 2] = [
-        FlagDef { ch: 'a', long: "multiple", kind: FlagKind::Bool, clears: &[], desc: "support multiple arguments and treat each as a NAME", value_name: "" },
-        FlagDef { ch: 's', long: "suffix", kind: FlagKind::Value, clears: &[], desc: "remove a trailing SUFFIX; implies -a", value_name: "SUFFIX" },
+        FlagDef { ch: 'a', long: "multiple", aliases: &[], kind: FlagKind::Bool, clears: &[], desc: "support multiple arguments and treat each as a NAME", value_name: "", hidden: false },
+        FlagDef { ch: 's', long: "suffix", aliases: &[], kind: FlagKind::Value, clears: &[], desc: "remove a trailing SUFFIX; implies -a", value_name: "SUFFIX", hidden: false },
     ];
 
     #[test]
