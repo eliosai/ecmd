@@ -14,6 +14,7 @@ pub struct CommandAttrs {
     pub short_doc: String,
     pub extra_help: Vec<String>,
     pub no_permute: bool,
+    pub no_override: bool,
 }
 
 impl CommandAttrs {
@@ -26,6 +27,7 @@ impl CommandAttrs {
         let mut short_doc = String::new();
         let mut extra_help = Vec::new();
         let mut no_permute = false;
+        let mut no_override = false;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("command")) {
             attr.parse_nested_meta(|meta| {
@@ -37,6 +39,8 @@ impl CommandAttrs {
                     lenient = true;
                 } else if meta.path.is_ident("no_permute") {
                     no_permute = true;
+                } else if meta.path.is_ident("no_override") {
+                    no_override = true;
                 } else if meta.path.is_ident("noop") {
                     noop = parse_lit_str(&meta)?;
                 } else if meta.path.is_ident("short_doc") {
@@ -84,6 +88,7 @@ impl CommandAttrs {
             short_doc,
             extra_help,
             no_permute,
+            no_override,
         })
     }
 }
@@ -97,6 +102,7 @@ pub struct FlagAttrs {
     pub aliases: Vec<String>,
     pub hidden: bool,
     pub implemented: bool,
+    pub allow_hyphen_values: bool,
 }
 
 impl FlagAttrs {
@@ -112,6 +118,7 @@ impl FlagAttrs {
         let mut aliases = Vec::new();
         let mut hidden = false;
         let mut implemented = true;
+        let mut allow_hyphen_values = true;
 
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("short") {
@@ -131,6 +138,8 @@ impl FlagAttrs {
                 hidden = true;
             } else if meta.path.is_ident("unimplemented") {
                 implemented = false;
+            } else if meta.path.is_ident("reject_hyphen_values") {
+                allow_hyphen_values = false;
             } else {
                 return Err(meta.error("unknown flag attribute"));
             }
@@ -152,6 +161,7 @@ impl FlagAttrs {
             aliases,
             hidden,
             implemented,
+            allow_hyphen_values,
         }))
     }
 }

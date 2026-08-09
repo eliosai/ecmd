@@ -21,6 +21,8 @@ pub struct FlagDefDef {
     value_name: String,
     hidden: bool,
     implemented: bool,
+    repeatable: bool,
+    allow_hyphen_values: bool,
 }
 
 impl From<FlagDefDef> for FlagDef<Owned> {
@@ -35,6 +37,8 @@ impl From<FlagDefDef> for FlagDef<Owned> {
             value_name: value.value_name,
             hidden: value.hidden,
             implemented: value.implemented,
+            repeatable: value.repeatable,
+            allow_hyphen_values: value.allow_hyphen_values,
         }
     }
 }
@@ -127,6 +131,8 @@ mod tests {
                 value_name: "ADDRESS".to_owned(),
                 hidden: false,
                 implemented: false,
+                repeatable: false,
+                allow_hyphen_values: true,
             }],
             positionals: Vec::new(),
             has_rest: true,
@@ -154,5 +160,7 @@ mod tests {
         assert_eq!(decoded.usage(), definition.usage());
         assert_eq!(decoded.help(), definition.help());
         assert!(!decoded.flags()[0].implemented);
+        assert!(!decoded.flags()[0].repeatable);
+        assert!(decoded.flags()[0].allow_hyphen_values);
     }
 }

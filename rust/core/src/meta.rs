@@ -513,6 +513,8 @@ mod tests {
         value_name: "",
         hidden: false,
         implemented: true,
+        repeatable: false,
+        allow_hyphen_values: true,
     }];
 
     #[test]
@@ -661,6 +663,8 @@ mod tests {
             value_name: "",
             hidden: false,
             implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
             desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
         },
         FlagDef {
@@ -672,6 +676,8 @@ mod tests {
             value_name: "",
             hidden: false,
             implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
             desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
         },
         FlagDef {
@@ -683,6 +689,8 @@ mod tests {
             value_name: "",
             hidden: false,
             implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
             desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
         },
     ];
@@ -858,6 +866,8 @@ mod tests {
             value_name: "",
             hidden: false,
             implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
         },
         FlagDef {
             ch: 's',
@@ -869,6 +879,8 @@ mod tests {
             value_name: "SUFFIX",
             hidden: false,
             implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
         },
     ];
 
@@ -883,6 +895,8 @@ mod tests {
             value_name: "",
             hidden: false,
             implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
         },
         FlagDef {
             ch: 'V',
@@ -894,6 +908,8 @@ mod tests {
             value_name: "",
             hidden: false,
             implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
         },
     ];
 

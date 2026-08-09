@@ -30,6 +30,8 @@ pub enum Error {
     AmbiguousOption(String),
     /// A flag that takes no value was given one via `--flag=value`.
     UnexpectedValue(String),
+    /// A scalar flag was supplied more than once.
+    RepeatedFlag(String),
     /// `--help` was requested; the caller should print help and exit 0.
     HelpRequested,
     /// `--version` was requested; the caller should print the version and exit 0.
@@ -57,6 +59,7 @@ impl fmt::Display for Error {
             Self::UnexpectedValue(name) => {
                 write!(f, "{name}: option doesn't allow an argument")
             }
+            Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
             Self::HelpRequested => write!(f, "help requested"),
             Self::VersionRequested => write!(f, "version requested"),
         }
@@ -96,6 +99,15 @@ mod tests {
     fn missing_required_displays_correctly() {
         let e = Error::MissingRequired("target".into());
         assert_eq!(e.to_string(), "missing required argument: target");
+    }
+
+    #[test]
+    fn repeated_flag_displays_correctly() {
+        let error = Error::RepeatedFlag("--verbose".into());
+        assert_eq!(
+            error.to_string(),
+            "--verbose: option cannot be used multiple times"
+        );
     }
 
     #[test]

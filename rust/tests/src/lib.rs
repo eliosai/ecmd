@@ -650,6 +650,7 @@ mod tests {
     #[command(
         name = "basename",
         style = "gnu",
+        no_override,
         short_doc = "basename [-z] NAME [SUFFIX]"
     )]
     struct Basename {
@@ -657,7 +658,7 @@ mod tests {
         #[flag(short = 'a')]
         multiple: bool,
         /// remove a trailing SUFFIX; implies -a
-        #[flag(short = 's', value_name = "SUFFIX")]
+        #[flag(short = 's', value_name = "SUFFIX", reject_hyphen_values)]
         suffix: Option<String>,
         /// end each output line with NUL, not newline
         #[flag(short = 'z')]
@@ -696,6 +697,52 @@ mod tests {
         let cmd = Basename::parse(&["-a", "-s", ".bak", "x"]).unwrap();
         assert!(cmd.multiple);
         assert_eq!(cmd.suffix.as_deref(), Some(".bak"));
+    }
+
+    #[test]
+    fn gnu_scalar_flags_reject_repetition() {
+        assert_eq!(
+            Basename::parse(&["--multiple", "--multiple", "x"]).err(),
+            Some(ecmd::error::Error::RepeatedFlag("--multiple".to_owned()))
+        );
+    }
+
+    #[derive(Command)]
+    #[command(name = "override", style = "gnu")]
+    struct Override {
+        #[flag(short = 'v')]
+        verbose: bool,
+    }
+
+    #[test]
+    fn gnu_commands_override_scalar_flags_by_default() {
+        let cmd = Override::parse(&["--verbose", "--verbose"]).unwrap();
+        assert!(cmd.verbose);
+    }
+
+    #[test]
+    fn gnu_value_flags_can_reject_option_looking_values() {
+        assert_eq!(
+            Basename::parse(&["--suffix", "--zero", "x"]).err(),
+            Some(ecmd::error::Error::MissingValue("--suffix".to_owned()))
+        );
+        assert_eq!(
+            Basename::parse(&["-s", "-1", "x"]).err(),
+            Some(ecmd::error::Error::UnknownFlag("-1".to_owned()))
+        );
+    }
+
+    #[test]
+    fn derive_metadata_records_occurrence_and_value_policy() {
+        let basename = Basename::def();
+        let suffix = basename.flags().iter().find(|flag| flag.ch == 's').unwrap();
+        assert!(!suffix.repeatable);
+        assert!(!suffix.allow_hyphen_values);
+
+        let hash = Hash::def();
+        let paths = hash.flags().iter().find(|flag| flag.ch == 'p').unwrap();
+        assert!(paths.repeatable);
+        assert!(paths.allow_hyphen_values);
     }
 
     #[test]
