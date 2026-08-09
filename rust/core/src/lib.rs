@@ -25,6 +25,8 @@
 //! assert_eq!(cmd.files.first(), Some("src/main.rs"));
 //! ```
 
+#[cfg(feature = "rkyv")]
+pub mod archive;
 pub mod error;
 pub mod meta;
 pub mod operands;

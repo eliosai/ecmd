@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Data, Fields, Field, Ident};
+use syn::{Data, DeriveInput, Field, Fields, Ident};
 
 use crate::attrs::{CommandAttrs, FlagAttrs, extract_doc_comment, extract_doc_sections};
 use crate::classify::{FieldRole, classify_field, field_ident};
@@ -47,7 +47,9 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
 
 // ── Extraction + classification ─────────────────────────────────
 
-fn extract_named_fields(input: &DeriveInput) -> syn::Result<&syn::punctuated::Punctuated<Field, syn::token::Comma>> {
+fn extract_named_fields(
+    input: &DeriveInput,
+) -> syn::Result<&syn::punctuated::Punctuated<Field, syn::token::Comma>> {
     match &input.data {
         Data::Struct(s) => match &s.fields {
             Fields::Named(n) => Ok(&n.named),
@@ -57,13 +59,25 @@ fn extract_named_fields(input: &DeriveInput) -> syn::Result<&syn::punctuated::Pu
     }
 }
 
-fn classify_all(fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>) -> syn::Result<Vec<ClassifiedField<'_>>> {
-    fields.iter().enumerate().map(|(i, f)| {
-        let role = classify_field(f)?;
-        let desc = extract_doc_comment(&f.attrs);
-        let id = field_id(&role, i);
-        Ok(ClassifiedField { field: f, ident: field_ident(f), role, desc, id })
-    }).collect()
+fn classify_all(
+    fields: &syn::punctuated::Punctuated<Field, syn::token::Comma>,
+) -> syn::Result<Vec<ClassifiedField<'_>>> {
+    fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let role = classify_field(f)?;
+            let desc = extract_doc_comment(&f.attrs);
+            let id = field_id(&role, i);
+            Ok(ClassifiedField {
+                field: f,
+                ident: field_ident(f),
+                role,
+                desc,
+                id,
+            })
+        })
+        .collect()
 }
 
 /// A flag's identity char: its short, or a private-use codepoint for long-only.
@@ -92,7 +106,8 @@ fn check_positional_ordering(fields: &[ClassifiedField<'_>]) -> syn::Result<()> 
             FieldRole::OptionalPositional => saw_optional = true,
             FieldRole::RequiredPositional if saw_optional => {
                 return Err(syn::Error::new_spanned(
-                    cf.field, "required positional cannot follow optional positional",
+                    cf.field,
+                    "required positional cannot follow optional positional",
                 ));
             }
             _ => {}
@@ -106,7 +121,8 @@ fn check_duplicate_flags(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
     for cf in fields {
         if cf.id != '\0' && !seen.insert(cf.id) {
             return Err(syn::Error::new_spanned(
-                cf.field, format!("duplicate flag '{}'", cf.id),
+                cf.field,
+                format!("duplicate flag '{}'", cf.id),
             ));
         }
     }
@@ -118,7 +134,8 @@ fn check_operands_last(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
     for cf in fields {
         if saw_rest {
             return Err(syn::Error::new_spanned(
-                cf.field, "no fields allowed after Operands",
+                cf.field,
+                "no fields allowed after Operands",
             ));
         }
         if matches!(cf.role, FieldRole::Rest) {
@@ -129,7 +146,8 @@ fn check_operands_last(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
 }
 
 fn check_clears_targets(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
-    let flag_names: HashSet<&Ident> = fields.iter()
+    let flag_names: HashSet<&Ident> = fields
+        .iter()
         .filter(|cf| flag_char(&cf.role).is_some())
         .map(|cf| cf.ident)
         .collect();
@@ -137,13 +155,12 @@ fn check_clears_targets(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
     for cf in fields {
         for target in clears_targets(&cf.role) {
             if target == cf.ident {
-                return Err(syn::Error::new_spanned(
-                    target, "flag cannot clear itself",
-                ));
+                return Err(syn::Error::new_spanned(target, "flag cannot clear itself"));
             }
             if !flag_names.contains(target) {
                 return Err(syn::Error::new_spanned(
-                    target, format!("`{target}` is not a flag field"),
+                    target,
+                    format!("`{target}` is not a flag field"),
                 ));
             }
         }
@@ -171,6 +188,9 @@ fn gen_parse(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream 
     quote! {
         static FLAGS: &[::ecmd::parse::FlagDef] = &[#flag_defs];
         let result = ::ecmd::parse::scan(args, FLAGS, #on_unknown, #style, #permute)?;
+        if let Some(flag) = result.unimplemented.first() {
+            return Err(::ecmd::error::Error::UnimplementedFlag(flag.clone()));
+        }
 
         #inits
 
@@ -198,7 +218,7 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
 
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false }
+            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true }
         });
     }
 
@@ -206,29 +226,40 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
 }
 
 fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let stmts: Vec<_> = fields.iter().map(|cf| {
-        let id = cf.ident;
-        match &cf.role {
-            FieldRole::BoolFlag(_) => quote! { let mut #id = false; },
-            FieldRole::PolarityFlag(_) => quote! { let mut #id = ::ecmd::polarity::Polarity::Unset; },
-            FieldRole::ValuedFlag(_)
-            | FieldRole::OptionalPositional => quote! { let mut #id = None; },
-            FieldRole::PolarValueFlag(_)
-            | FieldRole::RepeatableValueFlag(_) => quote! { let mut #id = Vec::new(); },
-            FieldRole::RequiredPositional | FieldRole::Rest => quote! { let #id; },
-        }
-    }).collect();
+    let stmts: Vec<_> = fields
+        .iter()
+        .map(|cf| {
+            let id = cf.ident;
+            match &cf.role {
+                FieldRole::BoolFlag(_) => quote! { let mut #id = false; },
+                FieldRole::PolarityFlag(_) => {
+                    quote! { let mut #id = ::ecmd::polarity::Polarity::Unset; }
+                }
+                FieldRole::ValuedFlag(_) | FieldRole::OptionalPositional => {
+                    quote! { let mut #id = None; }
+                }
+                FieldRole::PolarValueFlag(_) | FieldRole::RepeatableValueFlag(_) => {
+                    quote! { let mut #id = Vec::new(); }
+                }
+                FieldRole::RequiredPositional | FieldRole::Rest => quote! { let #id; },
+            }
+        })
+        .collect();
     quote! { #(#stmts)* }
 }
 
 fn gen_dispatch(fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let arms: Vec<_> = fields.iter().filter_map(|cf| {
-        gen_single_dispatch(cf, fields)
-    }).collect();
+    let arms: Vec<_> = fields
+        .iter()
+        .filter_map(|cf| gen_single_dispatch(cf, fields))
+        .collect();
     quote! { #(#arms)* }
 }
 
-fn gen_single_dispatch(cf: &ClassifiedField<'_>, all: &[ClassifiedField<'_>]) -> Option<TokenStream> {
+fn gen_single_dispatch(
+    cf: &ClassifiedField<'_>,
+    all: &[ClassifiedField<'_>],
+) -> Option<TokenStream> {
     let id = cf.ident;
     match &cf.role {
         FieldRole::BoolFlag(attrs) => {
@@ -268,19 +299,23 @@ fn gen_single_dispatch(cf: &ClassifiedField<'_>, all: &[ClassifiedField<'_>]) ->
 }
 
 fn gen_clears_resets(targets: &[Ident], all: &[ClassifiedField<'_>]) -> TokenStream {
-    let stmts: Vec<_> = targets.iter().filter_map(|target| {
-        let cf = all.iter().find(|f| f.ident == target)?;
-        let id = cf.ident;
-        let reset = match &cf.role {
-            FieldRole::BoolFlag(_) => quote! { #id = false; },
-            FieldRole::PolarityFlag(_) => quote! { #id = ::ecmd::polarity::Polarity::Unset; },
-            FieldRole::ValuedFlag(_) => quote! { #id = None; },
-            FieldRole::RepeatableValueFlag(_)
-            | FieldRole::PolarValueFlag(_) => quote! { #id = Vec::new(); },
-            _ => return None,
-        };
-        Some(reset)
-    }).collect();
+    let stmts: Vec<_> = targets
+        .iter()
+        .filter_map(|target| {
+            let cf = all.iter().find(|f| f.ident == target)?;
+            let id = cf.ident;
+            let reset = match &cf.role {
+                FieldRole::BoolFlag(_) => quote! { #id = false; },
+                FieldRole::PolarityFlag(_) => quote! { #id = ::ecmd::polarity::Polarity::Unset; },
+                FieldRole::ValuedFlag(_) => quote! { #id = None; },
+                FieldRole::RepeatableValueFlag(_) | FieldRole::PolarValueFlag(_) => {
+                    quote! { #id = Vec::new(); }
+                }
+                _ => return None,
+            };
+            Some(reset)
+        })
+        .collect();
     quote! { #(#stmts)* }
 }
 
@@ -332,6 +367,7 @@ fn gen_meta(
     } else {
         quote! { ::ecmd::parse::OnUnknown::Reject }
     };
+    let permute = !cmd.no_permute;
     let flag_metas = gen_flag_metas(cmd, fields);
     let pos_metas = gen_positional_metas(fields);
     let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
@@ -353,6 +389,7 @@ fn gen_meta(
             short_doc: #short_doc,
             style: #style,
             on_unknown: #on_unknown,
+            permute: #permute,
             flags: &[#flag_metas],
             positionals: &[#pos_metas],
             has_rest: #has_rest,
@@ -365,12 +402,24 @@ fn gen_meta(
 }
 
 fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let defs: Vec<_> = fields.iter().filter_map(|cf| flag_def_literal(cf, fields, cmd)).collect();
+    let mut defs: Vec<_> = fields
+        .iter()
+        .filter_map(|cf| flag_def_literal(cf, fields, cmd))
+        .collect();
+    for ch in cmd.noop.chars() {
+        defs.push(quote! {
+            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true }
+        });
+    }
     quote! { #(#defs),* }
 }
 
 /// One `FlagDef { … }` literal for a flag field, shared by parse and meta codegen.
-fn flag_def_literal(cf: &ClassifiedField<'_>, fields: &[ClassifiedField<'_>], cmd: &CommandAttrs) -> Option<TokenStream> {
+fn flag_def_literal(
+    cf: &ClassifiedField<'_>,
+    fields: &[ClassifiedField<'_>],
+    cmd: &CommandAttrs,
+) -> Option<TokenStream> {
     let (_, kind) = flag_def_tokens(&cf.role)?;
     let ch = cf.id;
     let clears: Vec<char> = resolve_clears(&cf.role, fields);
@@ -379,14 +428,17 @@ fn flag_def_literal(cf: &ClassifiedField<'_>, fields: &[ClassifiedField<'_>], cm
     let long = flag_long(cf, cmd);
     let aliases = flag_aliases(&cf.role);
     let hidden = flag_attrs(&cf.role).is_some_and(|a| a.hidden);
+    let implemented = flag_attrs(&cf.role).is_none_or(|a| a.implemented);
     Some(quote! {
-        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden }
+        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented }
     })
 }
 
 /// Alias long names declared via `#[flag(alias = "…")]`.
 fn flag_aliases(role: &FieldRole) -> Vec<String> {
-    flag_attrs(role).map(|a| a.aliases.clone()).unwrap_or_default()
+    flag_attrs(role)
+        .map(|a| a.aliases.clone())
+        .unwrap_or_default()
 }
 
 /// GNU long name for a flag: explicit `long=`, else kebab field name in gnu style, else empty.
@@ -417,18 +469,21 @@ fn style_tokens(cmd: &CommandAttrs) -> TokenStream {
 }
 
 fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let defs: Vec<_> = fields.iter().filter_map(|cf| {
-        let required = match &cf.role {
-            FieldRole::RequiredPositional => true,
-            FieldRole::OptionalPositional => false,
-            _ => return None,
-        };
-        let name = cf.ident.to_string();
-        let desc = &cf.desc;
-        Some(quote! {
-            ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc }
+    let defs: Vec<_> = fields
+        .iter()
+        .filter_map(|cf| {
+            let required = match &cf.role {
+                FieldRole::RequiredPositional => true,
+                FieldRole::OptionalPositional => false,
+                _ => return None,
+            };
+            let name = cf.ident.to_string();
+            let desc = &cf.desc;
+            Some(quote! {
+                ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc }
+            })
         })
-    }).collect();
+        .collect();
     quote! { #(#defs),* }
 }
 
@@ -452,7 +507,10 @@ fn gen_repeatable_push(id: &Ident, field: &Field, ch: char) -> TokenStream {
     }
 }
 
-#[expect(clippy::needless_pass_by_value, reason = "quote! interpolation requires owned TokenStream")]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "quote! interpolation requires owned TokenStream"
+)]
 fn gen_parse_into(target: TokenStream, ch: char) -> TokenStream {
     quote! {
         #target(v.parse().map_err(|e| {
@@ -507,15 +565,18 @@ fn flag_def_tokens(role: &FieldRole) -> Option<(char, TokenStream)> {
         FieldRole::ValuedFlag(a) | FieldRole::RepeatableValueFlag(a) => {
             Some((a.short, quote! { ::ecmd::parse::FlagKind::Value }))
         }
-        FieldRole::PolarValueFlag(a) => Some((a.short, quote! { ::ecmd::parse::FlagKind::PolarValue })),
+        FieldRole::PolarValueFlag(a) => {
+            Some((a.short, quote! { ::ecmd::parse::FlagKind::PolarValue }))
+        }
         _ => None,
     }
 }
 
 fn resolve_clears(role: &FieldRole, all: &[ClassifiedField<'_>]) -> Vec<char> {
-    clears_targets(role).iter().filter_map(|target| {
-        all.iter().find(|cf| cf.ident == target).map(|cf| cf.id)
-    }).collect()
+    clears_targets(role)
+        .iter()
+        .filter_map(|target| all.iter().find(|cf| cf.ident == target).map(|cf| cf.id))
+        .collect()
 }
 
 fn flag_value_name(role: &FieldRole) -> &str {
@@ -523,7 +584,11 @@ fn flag_value_name(role: &FieldRole) -> &str {
         FieldRole::ValuedFlag(a)
         | FieldRole::RepeatableValueFlag(a)
         | FieldRole::PolarValueFlag(a) => {
-            if a.value_name.is_empty() { "ARG" } else { &a.value_name }
+            if a.value_name.is_empty() {
+                "ARG"
+            } else {
+                &a.value_name
+            }
         }
         _ => "",
     }

@@ -1,6 +1,15 @@
 //! Integration tests for ecmd derive macro.
 
 #[cfg(test)]
+#[expect(
+    dead_code,
+    clippy::default_numeric_fallback,
+    clippy::doc_markdown,
+    clippy::indexing_slicing,
+    clippy::struct_field_names,
+    clippy::used_underscore_binding,
+    reason = "derive fixtures use direct field and index assertions"
+)]
 #[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use ecmd::Command;
@@ -217,6 +226,22 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[derive(Command)]
+    #[command(name = "noop_meta", noop = "eE")]
+    struct NoopMetadata {
+        _args: Operands,
+    }
+
+    #[test]
+    fn noop_flags_are_published_in_metadata() {
+        let flags: Vec<_> = NoopMetadata::def()
+            .flags
+            .iter()
+            .map(|flag| flag.ch)
+            .collect();
+        assert_eq!(flags, ['e', 'E']);
+    }
+
     // ── Phase 1c: PolarValue (set -o name) ──────────────────────
 
     #[derive(Command)]
@@ -311,7 +336,7 @@ mod tests {
         let def = Cd::def();
         assert_eq!(def.name, "cd");
         assert!(!def.flags.is_empty());
-        assert!(def.has_rest == false);
+        assert!(!def.has_rest);
     }
 
     #[test]
@@ -455,8 +480,12 @@ mod tests {
     /// alias returns true unless a NAME is supplied for which no alias has been
     /// defined.
     #[derive(Command)]
-    #[command(name = "alias", tag(kind = "bash"), lenient,
-        short_doc = "alias [-p] [name[=value] ... ]")]
+    #[command(
+        name = "alias",
+        tag(kind = "bash"),
+        lenient,
+        short_doc = "alias [-p] [name[=value] ... ]"
+    )]
     struct BashAlias {
         /// print all defined aliases in a reusable format
         #[flag(short = 'p')]
@@ -494,7 +523,11 @@ mod tests {
 
     #[test]
     fn derive_alias_short_doc_in_help() {
-        assert!(BashAlias::def().help().starts_with("alias: alias [-p] [name[=value] ... ]\n"));
+        assert!(
+            BashAlias::def()
+                .help()
+                .starts_with("alias: alias [-p] [name[=value] ... ]\n")
+        );
     }
 
     // ── Minimal: no Options, no Exit Status ────────────────────────
@@ -504,8 +537,12 @@ mod tests {
     /// Exits the shell with a status of N.  If N is omitted, the exit status
     /// is that of the last command executed.
     #[derive(Command)]
-    #[command(name = "exit", tag(kind = "special"), tag(special),
-        short_doc = "exit [n]")]
+    #[command(
+        name = "exit",
+        tag(kind = "special"),
+        tag(special),
+        short_doc = "exit [n]"
+    )]
     struct BashExit {
         exit_code: Option<String>,
     }
@@ -532,14 +569,18 @@ mod tests {
     /// # Exit Status
     /// Returns success unless a write error occurs.
     #[derive(Command)]
-    #[command(name = "echo2", tag(kind = "bash"), tag(no_help), lenient,
+    #[command(
+        name = "echo2",
+        tag(kind = "bash"),
+        tag(no_help),
+        lenient,
         short_doc = "echo [-neE] [arg ...]",
         extra_help(
             "Options:",
             "  -n\tdo not append a newline",
             "  -e\tenable interpretation of the following backslash escapes",
             "  -E\texplicitly suppress interpretation of backslash escapes",
-        ),
+        )
     )]
     struct BashEcho {
         echo_args: Operands,
@@ -606,7 +647,11 @@ mod tests {
     // ── GNU style: long options, inference, permutation, help ────
 
     #[derive(Command)]
-    #[command(name = "basename", style = "gnu", short_doc = "basename [-z] NAME [SUFFIX]")]
+    #[command(
+        name = "basename",
+        style = "gnu",
+        short_doc = "basename [-z] NAME [SUFFIX]"
+    )]
     struct Basename {
         /// support multiple arguments and treat each as a NAME
         #[flag(short = 'a')]
@@ -664,9 +709,13 @@ mod tests {
     fn gnu_derive_help_format() {
         let help = Basename::def().help();
         assert!(help.starts_with("Usage: basename [-z] NAME [SUFFIX]\n"));
-        assert!(help.contains("  -a, --multiple\tsupport multiple arguments and treat each as a NAME\n"));
+        assert!(
+            help.contains(
+                "  -a, --multiple\tsupport multiple arguments and treat each as a NAME\n"
+            )
+        );
         assert!(help.contains("  -s, --suffix=SUFFIX\tremove a trailing SUFFIX; implies -a\n"));
-        assert!(help.contains("      --help\tdisplay this help and exit\n"));
+        assert!(help.contains("  -h, --help\tdisplay this help and exit\n"));
     }
 
     #[test]
@@ -722,9 +771,35 @@ mod tests {
     #[test]
     fn long_only_usage_has_no_synthetic_char() {
         let usage = Paint::def().usage();
-        assert!(!usage.contains('\u{E000}'), "synthetic char leaked: {usage}");
+        assert!(
+            !usage.contains('\u{E000}'),
+            "synthetic char leaked: {usage}"
+        );
         assert!(usage.contains("[--color]"), "usage: {usage}");
         assert!(usage.contains("[--tint=HUE]"), "usage: {usage}");
         assert!(usage.contains("[-v]"), "usage: {usage}");
+    }
+
+    #[derive(Command, Debug)]
+    #[command(name = "fetch", style = "gnu")]
+    struct Fetch {
+        /// address for the external FTP implementation
+        #[flag(long = "ftp-port", value_name = "ADDRESS", unimplemented)]
+        ftp_port: Option<String>,
+        operands: Operands,
+    }
+
+    #[test]
+    fn unimplemented_flags_are_declared_but_rejected_at_runtime() {
+        let definition = Fetch::def();
+        let scan = definition.scan(&["--ftp-port=host"]).unwrap();
+
+        assert!(!definition.flags()[0].implemented);
+        assert_eq!(scan.unimplemented, ["--ftp-port"]);
+        assert_eq!(
+            Fetch::parse(&["--ftp-port=host"]).unwrap_err(),
+            ecmd::error::Error::UnimplementedFlag("--ftp-port".to_owned())
+        );
+        assert!(definition.help().contains("(external only)"));
     }
 }

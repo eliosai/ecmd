@@ -69,8 +69,12 @@ fn outer_type_name(ty: &Type) -> String {
 pub fn inner_type_name(ty: &Type) -> Option<String> {
     let Type::Path(path) = ty else { return None };
     let seg = path.path.segments.last()?;
-    let PathArguments::AngleBracketed(args) = &seg.arguments else { return None };
-    let GenericArgument::Type(inner) = args.args.first()? else { return None };
+    let PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    let GenericArgument::Type(inner) = args.args.first()? else {
+        return None;
+    };
     Some(outer_type_name(inner))
 }
 
@@ -81,7 +85,8 @@ pub fn inner_type_name(ty: &Type) -> Option<String> {
 /// Panics if called on a tuple struct field (upstream validates this).
 #[expect(clippy::panic, reason = "proc macro invariant: only named structs")]
 pub fn field_ident(field: &Field) -> &Ident {
-    field.ident.as_ref().unwrap_or_else(|| {
-        panic!("ecmd derive: only named struct fields are supported")
-    })
+    field
+        .ident
+        .as_ref()
+        .unwrap_or_else(|| panic!("ecmd derive: only named struct fields are supported"))
 }

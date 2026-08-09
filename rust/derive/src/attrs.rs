@@ -69,12 +69,22 @@ impl CommandAttrs {
         }
 
         if name.is_empty() {
-            let span = attrs.first()
+            let span = attrs
+                .first()
                 .map_or_else(Span::call_site, |a| a.bracket_token.span.join());
             return Err(syn::Error::new(span, "missing #[command(name = \"...\")]"));
         }
 
-        Ok(Self { name, style, lenient, noop, tags, short_doc, extra_help, no_permute })
+        Ok(Self {
+            name,
+            style,
+            lenient,
+            noop,
+            tags,
+            short_doc,
+            extra_help,
+            no_permute,
+        })
     }
 }
 
@@ -86,6 +96,7 @@ pub struct FlagAttrs {
     pub long: Option<String>,
     pub aliases: Vec<String>,
     pub hidden: bool,
+    pub implemented: bool,
 }
 
 impl FlagAttrs {
@@ -100,6 +111,7 @@ impl FlagAttrs {
         let mut long = None;
         let mut aliases = Vec::new();
         let mut hidden = false;
+        let mut implemented = true;
 
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("short") {
@@ -117,6 +129,8 @@ impl FlagAttrs {
                 aliases.push(parse_lit_str(&meta)?);
             } else if meta.path.is_ident("hide") {
                 hidden = true;
+            } else if meta.path.is_ident("unimplemented") {
+                implemented = false;
             } else {
                 return Err(meta.error("unknown flag attribute"));
             }
@@ -130,7 +144,15 @@ impl FlagAttrs {
             ));
         }
 
-        Ok(Some(Self { short, clears, value_name, long, aliases, hidden }))
+        Ok(Some(Self {
+            short,
+            clears,
+            value_name,
+            long,
+            aliases,
+            hidden,
+            implemented,
+        }))
     }
 }
 
@@ -160,7 +182,9 @@ fn extract_doc_lines(attrs: &[syn::Attribute]) -> Vec<String> {
         .filter(|a| a.path().is_ident("doc"))
         .filter_map(|a| {
             if let syn::Meta::NameValue(nv) = &a.meta
-                && let Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) = &nv.value
+                && let Expr::Lit(syn::ExprLit {
+                    lit: Lit::Str(s), ..
+                }) = &nv.value
             {
                 return Some(s.value());
             }
@@ -171,7 +195,12 @@ fn extract_doc_lines(attrs: &[syn::Attribute]) -> Vec<String> {
 }
 
 #[derive(PartialEq)]
-enum DocState { About, Description, Extra, ExitStatus }
+enum DocState {
+    About,
+    Description,
+    Extra,
+    ExitStatus,
+}
 
 fn parse_sections(lines: &[String]) -> DocSections {
     let mut about = String::new();
@@ -209,16 +238,28 @@ fn parse_sections(lines: &[String]) -> DocSections {
                     about.push(' ');
                     about.push_str(trimmed);
                 }
-            },
+            }
             DocState::Description => {
-                description.push(if trimmed.is_empty() { String::new() } else { trimmed.to_owned() });
-            },
+                description.push(if trimmed.is_empty() {
+                    String::new()
+                } else {
+                    trimmed.to_owned()
+                });
+            }
             DocState::Extra => {
-                extra.push(if trimmed.is_empty() { String::new() } else { trimmed.to_owned() });
-            },
+                extra.push(if trimmed.is_empty() {
+                    String::new()
+                } else {
+                    trimmed.to_owned()
+                });
+            }
             DocState::ExitStatus => {
-                exit_status.push(if trimmed.is_empty() { String::new() } else { trimmed.to_owned() });
-            },
+                exit_status.push(if trimmed.is_empty() {
+                    String::new()
+                } else {
+                    trimmed.to_owned()
+                });
+            }
         }
     }
 
@@ -226,7 +267,12 @@ fn parse_sections(lines: &[String]) -> DocSections {
     trim_trailing_empty(&mut extra);
     trim_trailing_empty(&mut exit_status);
 
-    DocSections { about, description, extra, exit_status }
+    DocSections {
+        about,
+        description,
+        extra,
+        exit_status,
+    }
 }
 
 fn trim_trailing_empty(lines: &mut Vec<String>) {
@@ -237,7 +283,10 @@ fn trim_trailing_empty(lines: &mut Vec<String>) {
 
 fn parse_lit_str(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<String> {
     let value: Expr = meta.value()?.parse()?;
-    if let Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) = &value {
+    if let Expr::Lit(syn::ExprLit {
+        lit: Lit::Str(s), ..
+    }) = &value
+    {
         return Ok(s.value());
     }
     Err(meta.error("expected string literal"))
@@ -245,7 +294,10 @@ fn parse_lit_str(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<String> {
 
 fn parse_lit_char(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<char> {
     let value: Expr = meta.value()?.parse()?;
-    if let Expr::Lit(syn::ExprLit { lit: Lit::Char(c), .. }) = &value {
+    if let Expr::Lit(syn::ExprLit {
+        lit: Lit::Char(c), ..
+    }) = &value
+    {
         return Ok(c.value());
     }
     Err(meta.error("expected char literal"))

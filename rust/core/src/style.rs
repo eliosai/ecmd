@@ -4,6 +4,10 @@
 ///
 /// Each style is additive — GNU includes POSIX, Modern includes GNU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[non_exhaustive]
 pub enum Style {
     /// POSIX only: `-x` flags, strict option-before-operand ordering.

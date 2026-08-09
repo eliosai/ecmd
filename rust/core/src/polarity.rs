@@ -45,7 +45,10 @@ impl Polarity {
 /// Used for flags like `set -o errexit` / `set +o errexit` where
 /// each occurrence carries both a polarity and a string value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[expect(clippy::exhaustive_structs, reason = "simple value object with pub fields")]
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "simple value object with pub fields"
+)]
 pub struct PolarVal {
     /// Whether this was `-flag` (On) or `+flag` (Off).
     pub polarity: Polarity,

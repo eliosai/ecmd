@@ -9,6 +9,8 @@ use std::fmt;
 pub enum Error {
     /// An unrecognized flag character or long option was provided.
     UnknownFlag(String),
+    /// A declared flag is available only through an external command.
+    UnimplementedFlag(String),
     /// A flag that requires a value was not given one.
     MissingValue(String),
     /// A required positional argument was not provided.
@@ -38,6 +40,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownFlag(flag) => write!(f, "{flag}: invalid option"),
+            Self::UnimplementedFlag(flag) => write!(f, "{flag}: external implementation required"),
             Self::MissingValue(flag) => {
                 write!(f, "{flag}: option requires an argument")
             }
@@ -78,6 +81,15 @@ mod tests {
     fn missing_value_displays_correctly() {
         let e = Error::MissingValue("-o".into());
         assert_eq!(e.to_string(), "-o: option requires an argument");
+    }
+
+    #[test]
+    fn unimplemented_flag_displays_correctly() {
+        let error = Error::UnimplementedFlag("--ftp-port".into());
+        assert_eq!(
+            error.to_string(),
+            "--ftp-port: external implementation required"
+        );
     }
 
     #[test]
