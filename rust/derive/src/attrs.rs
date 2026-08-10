@@ -102,7 +102,15 @@ pub struct FlagAttrs {
     pub aliases: Vec<String>,
     pub hidden: bool,
     pub implemented: bool,
+    pub repeat: RepeatAttr,
     pub allow_hyphen_values: bool,
+}
+
+/// Per-flag override for command occurrence policy
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RepeatAttr {
+    Default,
+    Repeatable,
 }
 
 impl FlagAttrs {
@@ -118,6 +126,7 @@ impl FlagAttrs {
         let mut aliases = Vec::new();
         let mut hidden = false;
         let mut implemented = true;
+        let mut repeat = RepeatAttr::Default;
         let mut allow_hyphen_values = true;
 
         attr.parse_nested_meta(|meta| {
@@ -138,6 +147,8 @@ impl FlagAttrs {
                 hidden = true;
             } else if meta.path.is_ident("unimplemented") {
                 implemented = false;
+            } else if meta.path.is_ident("repeatable") {
+                repeat = RepeatAttr::Repeatable;
             } else if meta.path.is_ident("reject_hyphen_values") {
                 allow_hyphen_values = false;
             } else {
@@ -161,6 +172,7 @@ impl FlagAttrs {
             aliases,
             hidden,
             implemented,
+            repeat,
             allow_hyphen_values,
         }))
     }

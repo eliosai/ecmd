@@ -6,7 +6,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, Ident};
 
-use crate::attrs::{CommandAttrs, FlagAttrs, extract_doc_comment, extract_doc_sections};
+use crate::attrs::{
+    CommandAttrs, FlagAttrs, RepeatAttr, extract_doc_comment, extract_doc_sections,
+};
 use crate::classify::{FieldRole, classify_field, field_ident};
 
 /// Classified field with its role pre-computed.
@@ -429,7 +431,10 @@ fn flag_def_literal(
     let aliases = flag_aliases(&cf.role);
     let hidden = flag_attrs(&cf.role).is_some_and(|a| a.hidden);
     let implemented = flag_attrs(&cf.role).is_none_or(|a| a.implemented);
-    let repeatable = !cmd.no_override || matches!(cf.role, FieldRole::RepeatableValueFlag(_));
+    let repeatable = flag_attrs(&cf.role)
+        .is_some_and(|attrs| attrs.repeat == RepeatAttr::Repeatable)
+        || !cmd.no_override
+        || matches!(cf.role, FieldRole::RepeatableValueFlag(_));
     let allow_hyphen_values = flag_attrs(&cf.role).is_none_or(|attrs| attrs.allow_hyphen_values);
     Some(quote! {
         ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values }

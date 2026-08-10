@@ -352,7 +352,7 @@ fn parse_known_cluster<S: Storage>(
                 result.flags.push(Parsed::Polar(ch, polarity));
             }
             FlagKind::Value | FlagKind::PolarValue => {
-                let value = extract_value(chars, bi, cursor, ch, def)?;
+                let value = extract_value(chars, bi, cursor, ch, def, flags)?;
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 let parsed = match def.kind {
                     FlagKind::Value => Parsed::Value(ch, value),
@@ -384,6 +384,7 @@ fn extract_value<S: Storage>(
     cursor: &mut Cursor<'_>,
     flag_ch: char,
     def: &FlagDef<S>,
+    flags: &[FlagDef<S>],
 ) -> Result<String, Error> {
     let after = byte_pos.saturating_add(1);
     let remainder = chars.get(after..).unwrap_or_default();
@@ -393,13 +394,14 @@ fn extract_value<S: Storage>(
         return Ok(remainder.strip_prefix('=').unwrap_or(remainder).to_owned());
     }
     let label = format!("-{flag_ch}");
-    reject_option_value(cursor.following(), def, &label)?;
+    reject_option_value(cursor.following(), def, flags, &label)?;
     cursor.next_value(flag_ch)
 }
 
 fn reject_option_value<S: Storage>(
     value: Option<&str>,
     def: &FlagDef<S>,
+    flags: &[FlagDef<S>],
     label: &str,
 ) -> Result<(), Error> {
     if def.allow_hyphen_values {
@@ -408,16 +410,25 @@ fn reject_option_value<S: Storage>(
     let Some(value) = value.filter(|value| value.starts_with('-') && value.len() > 1) else {
         return Ok(());
     };
-    let option_like = value.starts_with("--")
-        || value
-            .strip_prefix('-')
-            .and_then(|value| value.chars().next())
-            .is_some_and(char::is_alphabetic);
-    if option_like {
+    if is_declared_option(value, flags) {
         Err(Error::MissingValue(label.to_owned()))
     } else {
         Err(Error::UnknownFlag(value.to_owned()))
     }
+}
+
+fn is_declared_option<S: Storage>(value: &str, flags: &[FlagDef<S>]) -> bool {
+    if value == "--" {
+        return true;
+    }
+    if let Some(name) = value.strip_prefix("--") {
+        let name = name.split_once('=').map_or(name, |(name, _)| name);
+        return !matches!(resolve_long(name, flags), LongMatch::Unknown);
+    }
+    value
+        .strip_prefix('-')
+        .and_then(|cluster| cluster.chars().next())
+        .is_some_and(|ch| find_flag(ch, flags).is_some() || matches!(ch, 'h' | 'V'))
 }
 
 // ── Long-option processing (GNU style) ──────────────────────────
@@ -443,7 +454,7 @@ fn process_long<S: Storage>(
         .map_or((spec, None), |(n, v)| (n, Some(v)));
     cursor.advance();
     match resolve_long(name, flags) {
-        LongMatch::Flag(def) => apply_long(def, name, inline, cursor, result),
+        LongMatch::Flag(def) => apply_long(def, name, inline, cursor, flags, result),
         LongMatch::Help | LongMatch::Version if inline.is_some() => {
             Err(Error::UnexpectedValue(format!("--{name}")))
         }
@@ -460,6 +471,7 @@ fn apply_long<S: Storage>(
     name: &str,
     inline: Option<&str>,
     cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     if !def.implemented {
@@ -469,7 +481,7 @@ fn apply_long<S: Storage>(
         FlagKind::Noop => Ok(()),
         FlagKind::Bool | FlagKind::Polar => apply_long_flag(def, name, inline, result),
         FlagKind::Value | FlagKind::PolarValue => {
-            apply_long_value(def, name, inline, cursor, result)
+            apply_long_value(def, name, inline, cursor, flags, result)
         }
     }
 }
@@ -523,6 +535,7 @@ fn apply_long_value<S: Storage>(
     name: &str,
     inline: Option<&str>,
     cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
@@ -530,7 +543,7 @@ fn apply_long_value<S: Storage>(
         value.to_owned()
     } else {
         let label = format!("--{name}");
-        reject_option_value(cursor.peek(), def, &label)?;
+        reject_option_value(cursor.peek(), def, flags, &label)?;
         cursor.take_next(&label)?
     };
     reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;

@@ -720,6 +720,25 @@ mod tests {
         assert!(cmd.verbose);
     }
 
+    #[derive(Command)]
+    #[command(name = "mixed-repeat", style = "gnu", no_override)]
+    struct MixedRepeat {
+        #[flag(short = 'p', repeatable)]
+        parents: bool,
+        #[flag(short = 'v')]
+        verbose: bool,
+    }
+
+    #[test]
+    fn no_override_can_allow_one_scalar_flag_to_repeat() {
+        let cmd = MixedRepeat::parse(&["-p", "-p"]).unwrap();
+        assert!(cmd.parents);
+        assert_eq!(
+            MixedRepeat::parse(&["-v", "-v"]).err(),
+            Some(ecmd::error::Error::RepeatedFlag("-v".to_owned()))
+        );
+    }
+
     #[test]
     fn gnu_value_flags_can_reject_option_looking_values() {
         assert_eq!(
@@ -729,6 +748,10 @@ mod tests {
         assert_eq!(
             Basename::parse(&["-s", "-1", "x"]).err(),
             Some(ecmd::error::Error::UnknownFlag("-1".to_owned()))
+        );
+        assert_eq!(
+            Basename::parse(&["-s", "-w", "x"]).err(),
+            Some(ecmd::error::Error::UnknownFlag("-w".to_owned()))
         );
     }
 
