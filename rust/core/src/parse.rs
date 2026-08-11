@@ -184,6 +184,11 @@ pub fn scan<S: Storage>(
     result
         .operands
         .extend(cursor.rest().iter().map(|s| (*s).to_owned()));
+    result.flags.retain(|parsed| {
+        !flags
+            .iter()
+            .any(|flag| flag.ch == parsed_char(parsed) && flag.kind == FlagKind::Noop)
+    });
     Ok(result)
 }
 
@@ -346,7 +351,10 @@ fn parse_known_cluster<S: Storage>(
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Bool(ch));
             }
-            FlagKind::Noop => reject_repeat(def, result, &format!("-{ch}"), style)?,
+            FlagKind::Noop => {
+                reject_repeat(def, result, &format!("-{ch}"), style)?;
+                result.flags.push(Parsed::Bool(ch));
+            }
             FlagKind::Polar => {
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Polar(ch, polarity));
@@ -478,7 +486,11 @@ fn apply_long<S: Storage>(
         result.unimplemented.push(format!("--{name}"));
     }
     match def.kind {
-        FlagKind::Noop => Ok(()),
+        FlagKind::Noop => {
+            reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;
+            result.flags.push(Parsed::Bool(def.ch));
+            Ok(())
+        }
         FlagKind::Bool | FlagKind::Polar => apply_long_flag(def, name, inline, result),
         FlagKind::Value | FlagKind::PolarValue => {
             apply_long_value(def, name, inline, cursor, flags, result)
@@ -977,6 +989,14 @@ mod tests {
         let flags = [bool_flag('r'), noop_flag('e')];
         let r = scan(&["-re"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
         assert_eq!(r.flags, [Parsed::Bool('r')]);
+    }
+
+    #[test]
+    fn noop_flag_repetition_is_rejected_in_gnu_style() {
+        let flags = [noop_flag('f')];
+        let error = scan(&["-f", "-f"], &flags, OnUnknown::Reject, Style::Gnu, true)
+            .expect_err("a scalar noop may occur once");
+        assert_eq!(error, Error::RepeatedFlag("-f".to_owned()));
     }
 
     #[test]
