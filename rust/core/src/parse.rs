@@ -170,13 +170,13 @@ pub fn scan<S: Storage>(
                     style,
                     &mut result,
                 )?;
-            }
+            },
             // GNU permutation: an operand does not stop option scanning. With
             // `permute` off (POSIX order, e.g. `basename`), the first operand does.
             ArgClass::Operand if gnu && permute => {
                 result.operands.push(arg.to_owned());
                 cursor.advance();
-            }
+            },
             ArgClass::Operand => break,
         }
     }
@@ -281,6 +281,9 @@ fn process_cluster<S: Storage>(
     style: Style,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
+    if try_prefixed_value(chars, polarity, cursor, flags, style, result)? {
+        return Ok(());
+    }
     if try_passthrough(
         chars,
         cursor,
@@ -292,6 +295,38 @@ fn process_cluster<S: Storage>(
         return Ok(());
     }
     parse_known_cluster(chars, polarity, cursor, flags, style, result)
+}
+
+fn try_prefixed_value<S: Storage>(
+    chars: &str,
+    polarity: Polarity,
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    style: Style,
+    result: &mut ScanResult,
+) -> Result<bool, Error> {
+    let Some((value, ch)) = chars.split_at_checked(chars.len().saturating_sub(1)) else {
+        return Ok(false);
+    };
+    let Some(ch) = ch.chars().next() else {
+        return Ok(false);
+    };
+    if polarity != Polarity::On
+        || value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || !marker_chars(flags, "prefixed-values").contains(ch)
+    {
+        return Ok(false);
+    }
+    let Some(def) = find_flag(ch, flags) else {
+        return Ok(false);
+    };
+    let label = format!("-{ch}");
+    reject_conflict(ch, &label, flags, result)?;
+    reject_repeat(def, result, &label, style)?;
+    result.flags.push(Parsed::Value(ch, value.to_owned()));
+    cursor.advance();
+    Ok(true)
 }
 
 fn try_passthrough<S: Storage>(
@@ -318,12 +353,12 @@ fn try_passthrough<S: Storage>(
 fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style) -> bool {
     for &b in chars.as_bytes() {
         match find_flag(char::from(b), flags) {
-            None if implicit_short_action(char::from(b), style).is_some() => {}
+            None if implicit_short_action(char::from(b), style).is_some() => {},
             None => return true,
             Some(def) if matches!(def.kind, FlagKind::Value | FlagKind::PolarValue) => {
                 return false;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     false
@@ -346,19 +381,20 @@ fn parse_known_cluster<S: Storage>(
         if !def.implemented {
             result.unimplemented.push(format!("-{ch}"));
         }
+        reject_conflict(ch, &format!("-{ch}"), flags, result)?;
         match def.kind {
             FlagKind::Bool => {
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Bool(ch));
-            }
+            },
             FlagKind::Noop => {
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Bool(ch));
-            }
+            },
             FlagKind::Polar => {
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Polar(ch, polarity));
-            }
+            },
             FlagKind::Value | FlagKind::PolarValue => {
                 let value = extract_value(chars, bi, cursor, ch, def, flags)?;
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
@@ -369,7 +405,7 @@ fn parse_known_cluster<S: Storage>(
                 };
                 result.flags.push(parsed);
                 return Ok(());
-            }
+            },
         }
     }
     cursor.advance();
@@ -401,6 +437,21 @@ fn extract_value<S: Storage>(
         cursor.advance();
         // clap parity: a single leading `=` is the attached-value separator (`-c=5` → `5`).
         return Ok(remainder.strip_prefix('=').unwrap_or(remainder).to_owned());
+    }
+    if marker_chars(flags, "attached-values").contains(flag_ch) {
+        cursor.advance();
+        return Err(Error::MissingValue(format!("-{flag_ch}")));
+    }
+    if let Some((default, consume_next, any_value)) = optional_value(def.ch, flags) {
+        if consume_next
+            && cursor
+                .following()
+                .is_some_and(|value| any_value || is_value(value))
+        {
+            return cursor.next_value(flag_ch);
+        }
+        cursor.advance();
+        return Ok(default.to_owned());
     }
     let label = format!("-{flag_ch}");
     reject_option_value(cursor.following(), def, flags, &label)?;
@@ -466,7 +517,7 @@ fn process_long<S: Storage>(
         LongMatch::Flag(def) => apply_long(def, name, inline, cursor, flags, result),
         LongMatch::Help | LongMatch::Version if inline.is_some() => {
             Err(Error::UnexpectedValue(format!("--{name}")))
-        }
+        },
         LongMatch::Help => Err(Error::HelpRequested),
         LongMatch::Version => Err(Error::VersionRequested),
         LongMatch::Ambiguous => Err(Error::AmbiguousOption(format!("--{name}"))),
@@ -486,17 +537,52 @@ fn apply_long<S: Storage>(
     if !def.implemented {
         result.unimplemented.push(format!("--{name}"));
     }
+    reject_conflict(def.ch, &format!("--{name}"), flags, result)?;
     match def.kind {
         FlagKind::Noop => {
             reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;
             result.flags.push(Parsed::Bool(def.ch));
             Ok(())
-        }
+        },
         FlagKind::Bool | FlagKind::Polar => apply_long_flag(def, name, inline, result),
         FlagKind::Value | FlagKind::PolarValue => {
             apply_long_value(def, name, inline, cursor, flags, result)
+        },
+    }
+}
+
+fn reject_conflict<S: Storage>(
+    ch: char,
+    label: &str,
+    flags: &[FlagDef<S>],
+    result: &ScanResult,
+) -> Result<(), Error> {
+    let groups = flags
+        .iter()
+        .filter_map(|flag| flag.long.as_ref().strip_prefix("\0exclusive-flags:"));
+    for group in groups.filter(|group| group.contains(ch)) {
+        let current_group = group.split('|').find(|category| category.contains(ch));
+        let previous = result.flags.iter().map(parsed_char).find(|prior| {
+            group.contains(*prior)
+                && current_group.is_none_or(|category| !category.contains(*prior))
+        });
+        if let Some(previous) = previous {
+            return Err(Error::ConflictingFlags {
+                current: label.to_owned(),
+                previous: format!("-{previous}"),
+            });
         }
     }
+    Ok(())
+}
+
+fn marker_chars<S: Storage>(flags: &[FlagDef<S>], name: &str) -> String {
+    let prefix = format!("\0{name}:");
+    flags
+        .iter()
+        .find_map(|flag| flag.long.as_ref().strip_prefix(&prefix))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn reject_repeat<S: Storage>(
@@ -551,9 +637,22 @@ fn apply_long_value<S: Storage>(
     flags: &[FlagDef<S>],
     result: &mut ScanResult,
 ) -> Result<(), Error> {
+    if inline.is_none() && equals_only(name, flags) {
+        return Err(Error::UnknownFlag(format!("--{name}")));
+    }
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
     let value = if let Some(value) = inline {
         value.to_owned()
+    } else if let Some((default, consume_next, any_value)) = optional_value(def.ch, flags) {
+        if consume_next
+            && cursor
+                .peek()
+                .is_some_and(|value| any_value || is_value(value))
+        {
+            cursor.take_next(&format!("--{name}"))?
+        } else {
+            default.to_owned()
+        }
     } else {
         let label = format!("--{name}");
         reject_option_value(cursor.peek(), def, flags, &label)?;
@@ -566,6 +665,36 @@ fn apply_long_value<S: Storage>(
         Parsed::PolarValue(def.ch, Polarity::On, value)
     });
     Ok(())
+}
+
+fn optional_value<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<(&str, bool, bool)> {
+    flags.iter().find_map(|flag| {
+        let text = flag.long.as_ref();
+        let (marker, consume_next, any_value) = text
+            .strip_prefix("\0optional-value:")
+            .map(|marker| (marker, false, false))
+            .or_else(|| {
+                text.strip_prefix("\0optional-next-value:")
+                    .map(|marker| (marker, true, false))
+            })
+            .or_else(|| {
+                text.strip_prefix("\0optional-any-next-value:")
+                    .map(|marker| (marker, true, true))
+            })?;
+        let (encoded, default) = marker.split_once(':')?;
+        (encoded.chars().next() == Some(ch)).then_some((default, consume_next, any_value))
+    })
+}
+
+fn is_value(value: &str) -> bool {
+    value == "-" || !value.starts_with('-')
+}
+
+fn equals_only<S: Storage>(name: &str, flags: &[FlagDef<S>]) -> bool {
+    let marker = format!("\0equals-only:{name}");
+    flags
+        .iter()
+        .any(|flag| flag.hidden && flag.long.as_ref() == marker)
 }
 
 /// Exact match wins; otherwise fall back to unambiguous-prefix inference.
@@ -584,8 +713,15 @@ fn resolve_long<'a, S: Storage>(name: &str, flags: &'a [FlagDef<S>]) -> LongMatc
     match name {
         "help" => LongMatch::Help,
         "version" => LongMatch::Version,
+        _ if exact_long_names(flags) => LongMatch::Unknown,
         _ => infer_long(name, flags),
     }
+}
+
+fn exact_long_names<S: Storage>(flags: &[FlagDef<S>]) -> bool {
+    flags
+        .iter()
+        .any(|flag| flag.hidden && flag.long.as_ref() == "\0exact-long")
 }
 
 /// Every long name a flag answers to: its primary long plus any aliases.

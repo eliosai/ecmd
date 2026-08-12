@@ -111,8 +111,8 @@ fn check_positional_ordering(fields: &[ClassifiedField<'_>]) -> syn::Result<()> 
                     cf.field,
                     "required positional cannot follow optional positional",
                 ));
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     Ok(())
@@ -223,8 +223,168 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
             ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true }
         });
     }
+    append_exact_long_marker(cmd, &mut defs);
+    append_equals_only_markers(cmd, &mut defs);
+    append_optional_value_markers(cmd, fields, &mut defs);
+    append_optional_next_value_markers(cmd, fields, &mut defs);
+    append_optional_any_next_value_markers(cmd, fields, &mut defs);
+    append_field_group_marker(cmd, fields, &mut defs, "prefixed_values", "prefixed-values");
+    append_field_group_marker(cmd, fields, &mut defs, "attached_values", "attached-values");
+    append_field_group_marker(cmd, fields, &mut defs, "exclusive_flags", "exclusive-flags");
 
     quote! { #(#defs),* }
+}
+
+fn append_optional_any_next_value_markers(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+    defs: &mut Vec<TokenStream>,
+) {
+    append_value_markers(
+        cmd,
+        fields,
+        defs,
+        "optional_any_next_values",
+        "optional-any-next-value",
+    );
+}
+
+fn append_field_group_marker(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+    defs: &mut Vec<TokenStream>,
+    key_name: &str,
+    marker_name: &str,
+) {
+    for value in cmd
+        .tags
+        .iter()
+        .filter_map(|(key, value)| (key == key_name).then_some(value))
+    {
+        let chars = marker_field_groups(value, fields);
+        let marker = format!("\0{marker_name}:{chars}");
+        defs.push(quote! {
+            ::ecmd::parse::FlagDef {
+                ch: '\0', long: #marker, aliases: &[],
+                kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
+                value_name: "", hidden: true, implemented: true,
+                repeatable: false, allow_hyphen_values: true
+            }
+        });
+    }
+}
+
+fn marker_field_groups(value: &str, fields: &[ClassifiedField<'_>]) -> String {
+    value
+        .split(';')
+        .map(|group| {
+            group
+                .split(',')
+                .map(str::trim)
+                .filter_map(|name| fields.iter().find(|field| field.ident == name))
+                .filter_map(|field| flag_char(&field.role))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn append_optional_next_value_markers(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+    defs: &mut Vec<TokenStream>,
+) {
+    append_value_markers(
+        cmd,
+        fields,
+        defs,
+        "optional_next_values",
+        "optional-next-value",
+    );
+}
+
+fn append_optional_value_markers(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+    defs: &mut Vec<TokenStream>,
+) {
+    append_value_markers(cmd, fields, defs, "optional_values", "optional-value");
+}
+
+fn append_value_markers(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+    defs: &mut Vec<TokenStream>,
+    key_name: &str,
+    marker_name: &str,
+) {
+    for value in cmd
+        .tags
+        .iter()
+        .filter_map(|(key, value)| (key == key_name).then_some(value))
+    {
+        for entry in value
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+        {
+            let (field, default) = entry.split_once('=').unwrap_or((entry, ""));
+            let Some(ch) = fields
+                .iter()
+                .find(|candidate| candidate.ident == field)
+                .and_then(|candidate| flag_char(&candidate.role))
+            else {
+                continue;
+            };
+            let marker = format!("\0{marker_name}:{ch}:{default}");
+            defs.push(quote! {
+                ::ecmd::parse::FlagDef {
+                    ch: '\0', long: #marker, aliases: &[],
+                    kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
+                    value_name: "", hidden: true, implemented: true,
+                    repeatable: false, allow_hyphen_values: true
+                }
+            });
+        }
+    }
+}
+
+fn append_equals_only_markers(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
+    for value in cmd
+        .tags
+        .iter()
+        .filter_map(|(key, value)| (key == "equals_only").then_some(value))
+    {
+        for name in value
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            let marker = format!("\0equals-only:{name}");
+            defs.push(quote! {
+                ::ecmd::parse::FlagDef {
+                    ch: '\0', long: #marker, aliases: &[],
+                    kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
+                    value_name: "", hidden: true, implemented: true,
+                    repeatable: false, allow_hyphen_values: true
+                }
+            });
+        }
+    }
+}
+
+fn append_exact_long_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
+    if !cmd.tags.iter().any(|(key, _)| key == "exact_long") {
+        return;
+    }
+    defs.push(quote! {
+        ::ecmd::parse::FlagDef {
+            ch: '\0', long: "\0exact-long", aliases: &[],
+            kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
+            value_name: "", hidden: true, implemented: true,
+            repeatable: false, allow_hyphen_values: true
+        }
+    });
 }
 
 fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
@@ -236,13 +396,13 @@ fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
                 FieldRole::BoolFlag(_) => quote! { let mut #id = false; },
                 FieldRole::PolarityFlag(_) => {
                     quote! { let mut #id = ::ecmd::polarity::Polarity::Unset; }
-                }
+                },
                 FieldRole::ValuedFlag(_) | FieldRole::OptionalPositional => {
                     quote! { let mut #id = None; }
-                }
+                },
                 FieldRole::PolarValueFlag(_) | FieldRole::RepeatableValueFlag(_) => {
                     quote! { let mut #id = Vec::new(); }
-                }
+                },
                 FieldRole::RequiredPositional | FieldRole::Rest => quote! { let #id; },
             }
         })
@@ -268,24 +428,24 @@ fn gen_single_dispatch(
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! { ::ecmd::parse::Parsed::Bool(#ch) => { #id = true; #resets } })
-        }
+        },
         FieldRole::PolarityFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! { ::ecmd::parse::Parsed::Polar(#ch, p) => { #id = *p; #resets } })
-        }
+        },
         FieldRole::ValuedFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let assign = gen_value_assign(id, cf.field, ch);
             Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #assign #resets } })
-        }
+        },
         FieldRole::RepeatableValueFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let push = gen_repeatable_push(id, cf.field, ch);
             Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #push #resets } })
-        }
+        },
         FieldRole::PolarValueFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
@@ -295,7 +455,7 @@ fn gen_single_dispatch(
                     #resets
                 }
             })
-        }
+        },
         _ => None,
     }
 }
@@ -312,7 +472,7 @@ fn gen_clears_resets(targets: &[Ident], all: &[ClassifiedField<'_>]) -> TokenStr
                 FieldRole::ValuedFlag(_) => quote! { #id = None; },
                 FieldRole::RepeatableValueFlag(_) | FieldRole::PolarValueFlag(_) => {
                     quote! { #id = Vec::new(); }
-                }
+                },
                 _ => return None,
             };
             Some(reset)
@@ -332,22 +492,22 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
             FieldRole::OptionalPositional => {
                 stmts.push(quote! { #id = result.operands.get(#idx).cloned(); });
                 idx = idx.saturating_add(1);
-            }
+            },
             FieldRole::RequiredPositional => {
                 stmts.push(quote! {
                     #id = result.operands.get(#idx).cloned()
                         .ok_or_else(|| ::ecmd::error::Error::MissingRequired(#name.to_owned()))?;
                 });
                 idx = idx.saturating_add(1);
-            }
+            },
             FieldRole::Rest => {
                 stmts.push(quote! {
                     #id = ::ecmd::operands::Operands::from_args(
                         result.operands.get(#idx..).unwrap_or_default()
                     );
                 });
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     quote! { #(#stmts)* }
@@ -571,10 +731,10 @@ fn flag_def_tokens(role: &FieldRole) -> Option<(char, TokenStream)> {
         FieldRole::PolarityFlag(a) => Some((a.short, quote! { ::ecmd::parse::FlagKind::Polar })),
         FieldRole::ValuedFlag(a) | FieldRole::RepeatableValueFlag(a) => {
             Some((a.short, quote! { ::ecmd::parse::FlagKind::Value }))
-        }
+        },
         FieldRole::PolarValueFlag(a) => {
             Some((a.short, quote! { ::ecmd::parse::FlagKind::PolarValue }))
-        }
+        },
         _ => None,
     }
 }
@@ -596,7 +756,7 @@ fn flag_value_name(role: &FieldRole) -> &str {
             } else {
                 &a.value_name
             }
-        }
+        },
         _ => "",
     }
 }
