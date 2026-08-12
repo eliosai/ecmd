@@ -230,6 +230,13 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
     append_optional_any_next_value_markers(cmd, fields, &mut defs);
     append_field_group_marker(cmd, fields, &mut defs, "prefixed_values", "prefixed-values");
     append_field_group_marker(cmd, fields, &mut defs, "attached_values", "attached-values");
+    append_field_group_marker(
+        cmd,
+        fields,
+        &mut defs,
+        "first_numeric_value",
+        "first-numeric-value",
+    );
     append_field_group_marker(cmd, fields, &mut defs, "exclusive_flags", "exclusive-flags");
 
     quote! { #(#defs),* }

@@ -39,6 +39,15 @@ pub enum Error {
         /// The previously parsed flag.
         previous: String,
     },
+    /// An obsolete numeric value appeared after the first argument.
+    FirstNumericValue {
+        /// The option character reported by the command.
+        option: char,
+        /// The regular valued flag that replaces the obsolete form.
+        flag: char,
+        /// The obsolete value placeholder.
+        value_name: String,
+    },
     /// `--help` was requested; the caller should print help and exit 0.
     HelpRequested,
     /// `--version` was requested; the caller should print the version and exit 0.
@@ -70,6 +79,14 @@ impl fmt::Display for Error {
             Self::ConflictingFlags { current, previous } => {
                 write!(f, "{current}: conflicts with {previous}")
             }
+            Self::FirstNumericValue {
+                option,
+                flag,
+                value_name,
+            } => write!(
+                f,
+                "invalid option -- {option}; -{value_name} is recognized only when it is the first\noption; use -{flag} N instead"
+            ),
             Self::HelpRequested => write!(f, "help requested"),
             Self::VersionRequested => write!(f, "version requested"),
         }

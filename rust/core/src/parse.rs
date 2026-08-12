@@ -281,6 +281,9 @@ fn process_cluster<S: Storage>(
     style: Style,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
+    if try_first_numeric_value(chars, polarity, cursor, flags, style, result)? {
+        return Ok(());
+    }
     if try_prefixed_value(chars, polarity, cursor, flags, style, result)? {
         return Ok(());
     }
@@ -295,6 +298,36 @@ fn process_cluster<S: Storage>(
         return Ok(());
     }
     parse_known_cluster(chars, polarity, cursor, flags, style, result)
+}
+
+fn try_first_numeric_value<S: Storage>(
+    chars: &str,
+    polarity: Polarity,
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    style: Style,
+    result: &mut ScanResult,
+) -> Result<bool, Error> {
+    let Some(option) = chars.chars().next().filter(char::is_ascii_digit) else {
+        return Ok(false);
+    };
+    let Some(target) = marker_chars(flags, "first-numeric-value").chars().next() else {
+        return Ok(false);
+    };
+    let Some(def) = find_flag(target, flags).filter(|_| polarity == Polarity::On) else {
+        return Ok(false);
+    };
+    if cursor.pos != 0 {
+        return Err(Error::FirstNumericValue {
+            option,
+            flag: target,
+            value_name: def.value_name.as_ref().to_owned(),
+        });
+    }
+    reject_repeat(def, result, &format!("-{target}"), style)?;
+    result.flags.push(Parsed::Value(target, chars.to_owned()));
+    cursor.advance();
+    Ok(true)
 }
 
 fn try_prefixed_value<S: Storage>(

@@ -1028,6 +1028,44 @@ mod tests {
         );
     }
 
+    #[derive(Command, Debug)]
+    #[command(
+        name = "numeric-first",
+        style = "gnu",
+        tag(first_numeric_value = "width")
+    )]
+    struct NumericFirstValue {
+        #[flag(short = 'w', long = "width", value_name = "WIDTH")]
+        width: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn first_numeric_value_tag_captures_a_leading_obsolete_value() {
+        let command = NumericFirstValue::parse(&["-12", "file"]).unwrap();
+        assert_eq!(command.width.as_deref(), Some("12"));
+        assert_eq!(&*command.args, &["file"]);
+
+        let malformed = NumericFirstValue::parse(&["-12x"]).unwrap();
+        assert_eq!(malformed.width.as_deref(), Some("12x"));
+    }
+
+    #[test]
+    fn first_numeric_value_tag_rejects_the_obsolete_form_later() {
+        let error = NumericFirstValue::parse(&["file", "-12"]).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid option -- 1; -WIDTH is recognized only when it is the first\noption; use -w N instead"
+        );
+    }
+
+    #[test]
+    fn first_numeric_value_tag_leaves_values_after_double_dash_as_operands() {
+        let command = NumericFirstValue::parse(&["--", "-12"]).unwrap();
+        assert_eq!(command.width, None);
+        assert_eq!(&*command.args, &["-12"]);
+    }
+
     #[test]
     fn long_only_valued_flag() {
         let cmd = Paint::parse(&["--tint=red", "x"]).unwrap();
