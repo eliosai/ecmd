@@ -111,8 +111,8 @@ fn check_positional_ordering(fields: &[ClassifiedField<'_>]) -> syn::Result<()> 
                     cf.field,
                     "required positional cannot follow optional positional",
                 ));
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -396,13 +396,13 @@ fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
                 FieldRole::BoolFlag(_) => quote! { let mut #id = false; },
                 FieldRole::PolarityFlag(_) => {
                     quote! { let mut #id = ::ecmd::polarity::Polarity::Unset; }
-                },
+                }
                 FieldRole::ValuedFlag(_) | FieldRole::OptionalPositional => {
                     quote! { let mut #id = None; }
-                },
+                }
                 FieldRole::PolarValueFlag(_) | FieldRole::RepeatableValueFlag(_) => {
                     quote! { let mut #id = Vec::new(); }
-                },
+                }
                 FieldRole::RequiredPositional | FieldRole::Rest => quote! { let #id; },
             }
         })
@@ -428,24 +428,24 @@ fn gen_single_dispatch(
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! { ::ecmd::parse::Parsed::Bool(#ch) => { #id = true; #resets } })
-        },
+        }
         FieldRole::PolarityFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! { ::ecmd::parse::Parsed::Polar(#ch, p) => { #id = *p; #resets } })
-        },
+        }
         FieldRole::ValuedFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let assign = gen_value_assign(id, cf.field, ch);
             Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #assign #resets } })
-        },
+        }
         FieldRole::RepeatableValueFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let push = gen_repeatable_push(id, cf.field, ch);
             Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #push #resets } })
-        },
+        }
         FieldRole::PolarValueFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
@@ -455,7 +455,7 @@ fn gen_single_dispatch(
                     #resets
                 }
             })
-        },
+        }
         _ => None,
     }
 }
@@ -472,7 +472,7 @@ fn gen_clears_resets(targets: &[Ident], all: &[ClassifiedField<'_>]) -> TokenStr
                 FieldRole::ValuedFlag(_) => quote! { #id = None; },
                 FieldRole::RepeatableValueFlag(_) | FieldRole::PolarValueFlag(_) => {
                     quote! { #id = Vec::new(); }
-                },
+                }
                 _ => return None,
             };
             Some(reset)
@@ -492,22 +492,22 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
             FieldRole::OptionalPositional => {
                 stmts.push(quote! { #id = result.operands.get(#idx).cloned(); });
                 idx = idx.saturating_add(1);
-            },
+            }
             FieldRole::RequiredPositional => {
                 stmts.push(quote! {
                     #id = result.operands.get(#idx).cloned()
                         .ok_or_else(|| ::ecmd::error::Error::MissingRequired(#name.to_owned()))?;
                 });
                 idx = idx.saturating_add(1);
-            },
+            }
             FieldRole::Rest => {
                 stmts.push(quote! {
                     #id = ::ecmd::operands::Operands::from_args(
                         result.operands.get(#idx..).unwrap_or_default()
                     );
                 });
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
     quote! { #(#stmts)* }
@@ -731,10 +731,10 @@ fn flag_def_tokens(role: &FieldRole) -> Option<(char, TokenStream)> {
         FieldRole::PolarityFlag(a) => Some((a.short, quote! { ::ecmd::parse::FlagKind::Polar })),
         FieldRole::ValuedFlag(a) | FieldRole::RepeatableValueFlag(a) => {
             Some((a.short, quote! { ::ecmd::parse::FlagKind::Value }))
-        },
+        }
         FieldRole::PolarValueFlag(a) => {
             Some((a.short, quote! { ::ecmd::parse::FlagKind::PolarValue }))
-        },
+        }
         _ => None,
     }
 }
@@ -756,7 +756,7 @@ fn flag_value_name(role: &FieldRole) -> &str {
             } else {
                 &a.value_name
             }
-        },
+        }
         _ => "",
     }
 }

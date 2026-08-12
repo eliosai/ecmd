@@ -52,10 +52,10 @@ impl fmt::Display for Error {
             Self::UnimplementedFlag(flag) => write!(f, "{flag}: external implementation required"),
             Self::MissingValue(flag) => {
                 write!(f, "{flag}: option requires an argument")
-            },
+            }
             Self::MissingRequired(name) => {
                 write!(f, "missing required argument: {name}")
-            },
+            }
             Self::InvalidValue {
                 flag,
                 value,
@@ -65,11 +65,11 @@ impl fmt::Display for Error {
             Self::AmbiguousOption(name) => write!(f, "{name}: option is ambiguous"),
             Self::UnexpectedValue(name) => {
                 write!(f, "{name}: option doesn't allow an argument")
-            },
+            }
             Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
             Self::ConflictingFlags { current, previous } => {
                 write!(f, "{current}: conflicts with {previous}")
-            },
+            }
             Self::HelpRequested => write!(f, "help requested"),
             Self::VersionRequested => write!(f, "version requested"),
         }

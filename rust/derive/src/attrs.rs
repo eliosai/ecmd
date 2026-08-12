@@ -260,28 +260,28 @@ fn parse_sections(lines: &[String]) -> DocSections {
                     about.push(' ');
                     about.push_str(trimmed);
                 }
-            },
+            }
             DocState::Description => {
                 description.push(if trimmed.is_empty() {
                     String::new()
                 } else {
                     trimmed.to_owned()
                 });
-            },
+            }
             DocState::Extra => {
                 extra.push(if trimmed.is_empty() {
                     String::new()
                 } else {
                     trimmed.to_owned()
                 });
-            },
+            }
             DocState::ExitStatus => {
                 exit_status.push(if trimmed.is_empty() {
                     String::new()
                 } else {
                     trimmed.to_owned()
                 });
-            },
+            }
         }
     }
 

@@ -170,13 +170,13 @@ pub fn scan<S: Storage>(
                     style,
                     &mut result,
                 )?;
-            },
+            }
             // GNU permutation: an operand does not stop option scanning. With
             // `permute` off (POSIX order, e.g. `basename`), the first operand does.
             ArgClass::Operand if gnu && permute => {
                 result.operands.push(arg.to_owned());
                 cursor.advance();
-            },
+            }
             ArgClass::Operand => break,
         }
     }
@@ -353,12 +353,12 @@ fn try_passthrough<S: Storage>(
 fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style) -> bool {
     for &b in chars.as_bytes() {
         match find_flag(char::from(b), flags) {
-            None if implicit_short_action(char::from(b), style).is_some() => {},
+            None if implicit_short_action(char::from(b), style).is_some() => {}
             None => return true,
             Some(def) if matches!(def.kind, FlagKind::Value | FlagKind::PolarValue) => {
                 return false;
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
     false
@@ -386,15 +386,15 @@ fn parse_known_cluster<S: Storage>(
             FlagKind::Bool => {
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Bool(ch));
-            },
+            }
             FlagKind::Noop => {
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Bool(ch));
-            },
+            }
             FlagKind::Polar => {
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 result.flags.push(Parsed::Polar(ch, polarity));
-            },
+            }
             FlagKind::Value | FlagKind::PolarValue => {
                 let value = extract_value(chars, bi, cursor, ch, def, flags)?;
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
@@ -405,7 +405,7 @@ fn parse_known_cluster<S: Storage>(
                 };
                 result.flags.push(parsed);
                 return Ok(());
-            },
+            }
         }
     }
     cursor.advance();
@@ -517,7 +517,7 @@ fn process_long<S: Storage>(
         LongMatch::Flag(def) => apply_long(def, name, inline, cursor, flags, result),
         LongMatch::Help | LongMatch::Version if inline.is_some() => {
             Err(Error::UnexpectedValue(format!("--{name}")))
-        },
+        }
         LongMatch::Help => Err(Error::HelpRequested),
         LongMatch::Version => Err(Error::VersionRequested),
         LongMatch::Ambiguous => Err(Error::AmbiguousOption(format!("--{name}"))),
@@ -543,11 +543,11 @@ fn apply_long<S: Storage>(
             reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;
             result.flags.push(Parsed::Bool(def.ch));
             Ok(())
-        },
+        }
         FlagKind::Bool | FlagKind::Polar => apply_long_flag(def, name, inline, result),
         FlagKind::Value | FlagKind::PolarValue => {
             apply_long_value(def, name, inline, cursor, flags, result)
-        },
+        }
     }
 }
 
