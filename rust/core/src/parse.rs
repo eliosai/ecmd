@@ -364,6 +364,7 @@ fn parse_known_cluster<S: Storage>(
                 reject_repeat(def, result, &format!("-{ch}"), style)?;
                 let parsed = match def.kind {
                     FlagKind::Value => Parsed::Value(ch, value),
+                    FlagKind::PolarValue => Parsed::PolarValue(ch, polarity, value),
                     _ => Parsed::PolarValue(ch, polarity, value),
                 };
                 result.flags.push(parsed);
