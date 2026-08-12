@@ -832,6 +832,183 @@ mod tests {
         assert!(cmd.color);
     }
 
+    #[derive(Command, Debug)]
+    #[command(
+        name = "exact",
+        style = "gnu",
+        tag(exact_long),
+        tag(equals_only = "limit")
+    )]
+    struct ExactLong {
+        #[flag(long = "verbose")]
+        verbose: bool,
+        #[flag(long = "limit", value_name = "COUNT")]
+        limit: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn exact_long_tag_rejects_unambiguous_prefixes() {
+        assert_eq!(
+            ExactLong::parse(&["--verb", "x"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("--verb".to_owned())
+        );
+        let command = ExactLong::parse(&["--verbose", "x"]).unwrap();
+        assert!(command.verbose);
+        assert_eq!(command.files[0], "x");
+    }
+
+    #[test]
+    fn equals_only_tag_rejects_a_separated_long_value() {
+        assert_eq!(
+            ExactLong::parse(&["--limit", "2", "x"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("--limit".to_owned())
+        );
+        let command = ExactLong::parse(&["--limit=2", "x"]).unwrap();
+        assert_eq!(command.limit.as_deref(), Some("2"));
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "optional-value",
+        style = "gnu",
+        tag(optional_values = "legacy=default")
+    )]
+    struct OptionalValue {
+        #[flag(short = 'i', long = "replace")]
+        legacy: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_value_uses_its_default_without_consuming_an_operand() {
+        let command = OptionalValue::parse(&["-i", "printf"]).unwrap();
+        assert_eq!(command.legacy.as_deref(), Some("default"));
+        assert_eq!(&*command.args, &["printf"]);
+
+        let command = OptionalValue::parse(&["--replace", "printf"]).unwrap();
+        assert_eq!(command.legacy.as_deref(), Some("default"));
+        assert_eq!(&*command.args, &["printf"]);
+    }
+
+    #[test]
+    fn optional_value_accepts_attached_short_and_long_values() {
+        let short = OptionalValue::parse(&["-iVALUE"]).unwrap();
+        assert_eq!(short.legacy.as_deref(), Some("VALUE"));
+
+        let long = OptionalValue::parse(&["--replace=VALUE"]).unwrap();
+        assert_eq!(long.legacy.as_deref(), Some("VALUE"));
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "optional-next-value",
+        style = "gnu",
+        tag(optional_next_values = "lines=1")
+    )]
+    struct OptionalNextValue {
+        #[flag(short = 'l', long = "lines")]
+        lines: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_next_value_consumes_a_non_option_or_uses_its_default() {
+        let consumed = OptionalNextValue::parse(&["-l", "2", "printf"]).unwrap();
+        assert_eq!(consumed.lines.as_deref(), Some("2"));
+        assert_eq!(&*consumed.args, &["printf"]);
+
+        let defaulted = OptionalNextValue::parse(&["-l", "-r"]).unwrap_err();
+        assert_eq!(defaulted, ecmd::error::Error::UnknownFlag("-r".to_owned()));
+
+        let defaulted = OptionalNextValue::parse(&["-l"]).unwrap();
+        assert_eq!(defaulted.lines.as_deref(), Some("1"));
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "dense-flags",
+        style = "gnu",
+        tag(optional_values = "unified=3,context=3"),
+        tag(prefixed_values = "unified,context"),
+        tag(exclusive_flags = "unified;context;side")
+    )]
+    struct DenseFlags {
+        #[flag(short = 'u', long = "unified")]
+        unified: Option<String>,
+        #[flag(short = 'c', long = "context")]
+        context: Option<String>,
+        #[flag(short = 'y', long = "side-by-side")]
+        side: bool,
+        args: Operands,
+    }
+
+    #[test]
+    fn prefixed_value_tag_accepts_value_before_short_flag() {
+        let command = DenseFlags::parse(&["-12u", "left", "right"]).unwrap();
+        assert_eq!(command.unified.as_deref(), Some("12"));
+        assert_eq!(&*command.args, &["left", "right"]);
+    }
+
+    #[test]
+    fn exclusive_flags_report_the_flag_that_created_the_conflict() {
+        assert_eq!(
+            DenseFlags::parse(&["-u", "-y"]).unwrap_err(),
+            ecmd::error::Error::ConflictingFlags {
+                current: "-y".to_owned(),
+                previous: "-u".to_owned(),
+            }
+        );
+        assert_eq!(
+            DenseFlags::parse(&["--side-by-side", "--context=2"]).unwrap_err(),
+            ecmd::error::Error::ConflictingFlags {
+                current: "--context".to_owned(),
+                previous: "-y".to_owned(),
+            }
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "optional-any-next",
+        style = "gnu",
+        tag(optional_any_next_values = "context=3")
+    )]
+    struct OptionalAnyNext {
+        #[flag(short = 'C')]
+        context: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_any_next_uses_default_only_at_end_of_arguments() {
+        let defaulted = OptionalAnyNext::parse(&["-C"]).unwrap();
+        assert_eq!(defaulted.context.as_deref(), Some("3"));
+
+        let consumed = OptionalAnyNext::parse(&["-C", "-q"]).unwrap();
+        assert_eq!(consumed.context.as_deref(), Some("-q"));
+        assert!(consumed.args.is_empty());
+    }
+
+    #[derive(Command, Debug)]
+    #[command(name = "attached", style = "gnu", tag(attached_values = "level"))]
+    struct AttachedValue {
+        #[flag(short = 'O')]
+        level: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn attached_value_tag_rejects_a_separated_short_value() {
+        let command = AttachedValue::parse(&["-O3", "path"]).unwrap();
+        assert_eq!(command.level.as_deref(), Some("3"));
+        assert_eq!(&*command.args, &["path"]);
+        assert_eq!(
+            AttachedValue::parse(&["-O", "3", "path"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-O".to_owned())
+        );
+    }
+
     #[test]
     fn long_only_valued_flag() {
         let cmd = Paint::parse(&["--tint=red", "x"]).unwrap();

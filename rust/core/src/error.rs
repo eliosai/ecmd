@@ -32,6 +32,13 @@ pub enum Error {
     UnexpectedValue(String),
     /// A scalar flag was supplied more than once.
     RepeatedFlag(String),
+    /// A flag was combined with a mutually exclusive flag.
+    ConflictingFlags {
+        /// The flag that created the conflict.
+        current: String,
+        /// The previously parsed flag.
+        previous: String,
+    },
     /// `--help` was requested; the caller should print help and exit 0.
     HelpRequested,
     /// `--version` was requested; the caller should print the version and exit 0.
@@ -45,10 +52,10 @@ impl fmt::Display for Error {
             Self::UnimplementedFlag(flag) => write!(f, "{flag}: external implementation required"),
             Self::MissingValue(flag) => {
                 write!(f, "{flag}: option requires an argument")
-            }
+            },
             Self::MissingRequired(name) => {
                 write!(f, "missing required argument: {name}")
-            }
+            },
             Self::InvalidValue {
                 flag,
                 value,
@@ -58,8 +65,11 @@ impl fmt::Display for Error {
             Self::AmbiguousOption(name) => write!(f, "{name}: option is ambiguous"),
             Self::UnexpectedValue(name) => {
                 write!(f, "{name}: option doesn't allow an argument")
-            }
+            },
             Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
+            Self::ConflictingFlags { current, previous } => {
+                write!(f, "{current}: conflicts with {previous}")
+            },
             Self::HelpRequested => write!(f, "help requested"),
             Self::VersionRequested => write!(f, "version requested"),
         }
