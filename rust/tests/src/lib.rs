@@ -1067,6 +1067,17 @@ mod tests {
     }
 
     #[test]
+    fn first_numeric_value_tag_keeps_zero_and_overflow_as_operands() {
+        let zero = NumericFirstValue::parse(&["-0"]).unwrap();
+        assert_eq!(zero.width, None);
+        assert_eq!(&*zero.args, &["-0"]);
+
+        let overflow = NumericFirstValue::parse(&["-999999999999999999999"]).unwrap();
+        assert_eq!(overflow.width, None);
+        assert_eq!(&*overflow.args, &["-999999999999999999999"]);
+    }
+
+    #[test]
     fn long_only_valued_flag() {
         let cmd = Paint::parse(&["--tint=red", "x"]).unwrap();
         assert_eq!(cmd.tint.as_deref(), Some("red"));

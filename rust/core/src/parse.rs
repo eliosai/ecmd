@@ -317,6 +317,14 @@ fn try_first_numeric_value<S: Storage>(
     let Some(def) = find_flag(target, flags).filter(|_| polarity == Polarity::On) else {
         return Ok(false);
     };
+    let obsolete = format!("-{chars}");
+    if chars.chars().all(|ch| ch.is_ascii_digit())
+        && !obsolete.parse::<isize>().is_ok_and(|value| value < 0)
+    {
+        result.operands.push(obsolete);
+        cursor.advance();
+        return Ok(true);
+    }
     if cursor.pos != 0 {
         return Err(Error::FirstNumericValue {
             option,
