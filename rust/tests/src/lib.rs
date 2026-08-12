@@ -902,6 +902,25 @@ mod tests {
 
     #[derive(Command, Debug)]
     #[command(
+        name = "long-optional-value",
+        style = "gnu",
+        tag(optional_values = "mode=default")
+    )]
+    struct LongOptionalValue {
+        #[flag(long = "mode")]
+        mode: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn long_only_optional_value_uses_its_default_without_consuming_an_operand() {
+        let command = LongOptionalValue::parse(&["--mode", "operand"]).unwrap();
+        assert_eq!(command.mode.as_deref(), Some("default"));
+        assert_eq!(&*command.args, &["operand"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
         name = "optional-next-value",
         style = "gnu",
         tag(optional_next_values = "lines=1")

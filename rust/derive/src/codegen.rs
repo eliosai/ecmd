@@ -332,7 +332,7 @@ fn append_value_markers(
             let Some(ch) = fields
                 .iter()
                 .find(|candidate| candidate.ident == field)
-                .and_then(|candidate| flag_char(&candidate.role))
+                .map(|candidate| candidate.id)
             else {
                 continue;
             };
