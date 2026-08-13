@@ -95,6 +95,21 @@ mod tests {
         assert_eq!(cmd.args.join(" "), "-nXYZ rest");
     }
 
+    #[derive(Command)]
+    #[command(name = "gnu-lenient", style = "gnu", lenient)]
+    struct GnuLenient {
+        #[flag(short = 'n', long = "number")]
+        number: bool,
+        args: Operands,
+    }
+
+    #[test]
+    fn gnu_lenient_unknown_long_becomes_operand() {
+        let cmd = GnuLenient::parse(&["--not-an-option=value", "rest"]).unwrap();
+        assert!(!cmd.number);
+        assert_eq!(cmd.args.join(" "), "--not-an-option=value rest");
+    }
+
     // ── Polarity ────────────────────────────────────────────────
 
     #[derive(Command)]
@@ -946,6 +961,33 @@ mod tests {
 
     #[derive(Command, Debug)]
     #[command(
+        name = "optional-numeric-next",
+        style = "gnu",
+        tag(optional_numeric_next_values = "number=5")
+    )]
+    struct OptionalNumericNextValue {
+        #[flag(short = 'n', long = "number-lines")]
+        number: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_numeric_next_consumes_only_numbering_specs() {
+        let width = OptionalNumericNextValue::parse(&["-n", "2", "file"]).unwrap();
+        assert_eq!(width.number.as_deref(), Some("2"));
+        assert_eq!(&*width.args, &["file"]);
+
+        let separator = OptionalNumericNextValue::parse(&["-n", "c3", "file"]).unwrap();
+        assert_eq!(separator.number.as_deref(), Some("c3"));
+        assert_eq!(&*separator.args, &["file"]);
+
+        let defaulted = OptionalNumericNextValue::parse(&["-n", "file"]).unwrap();
+        assert_eq!(defaulted.number.as_deref(), Some("5"));
+        assert_eq!(&*defaulted.args, &["file"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
         name = "dense-flags",
         style = "gnu",
         tag(optional_values = "unified=3,context=3"),
@@ -1075,6 +1117,41 @@ mod tests {
         let overflow = NumericFirstValue::parse(&["-999999999999999999999"]).unwrap();
         assert_eq!(overflow.width, None);
         assert_eq!(&*overflow.args, &["-999999999999999999999"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "legacy-numeric-operands",
+        style = "gnu",
+        tag(numeric_operands = "columns=-,pages=+")
+    )]
+    struct LegacyNumericOperands {
+        #[flag(long = "columns")]
+        columns: Option<String>,
+        #[flag(long = "pages")]
+        pages: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn numeric_operand_tag_captures_whole_tokens_before_the_terminator() {
+        let command = LegacyNumericOperands::parse(&["file", "-3", "+2:4"]).unwrap();
+        assert_eq!(command.columns.as_deref(), Some("3"));
+        assert_eq!(command.pages.as_deref(), Some("2:4"));
+        assert_eq!(&*command.args, &["file"]);
+
+        let shielded = LegacyNumericOperands::parse(&["--", "-3", "+2"]).unwrap();
+        assert_eq!(shielded.columns, None);
+        assert_eq!(shielded.pages, None);
+        assert_eq!(&*shielded.args, &["-3", "+2"]);
+    }
+
+    #[test]
+    fn numeric_operand_tag_ignores_later_values_and_keeps_malformed_tokens() {
+        let command = LegacyNumericOperands::parse(&["-2", "-4", "+3", "+5", "-0", "+x"]).unwrap();
+        assert_eq!(command.columns.as_deref(), Some("2"));
+        assert_eq!(command.pages.as_deref(), Some("3"));
+        assert_eq!(&*command.args, &["+x"]);
     }
 
     #[test]

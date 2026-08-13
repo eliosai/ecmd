@@ -154,9 +154,14 @@ pub fn scan<S: Storage>(
             cursor.advance();
             break;
         }
+        if try_numeric_operand(arg, &mut cursor, flags, &mut result) {
+            continue;
+        }
         if gnu && is_long(arg) {
             let spec = arg.strip_prefix("--").unwrap_or_default();
-            process_long(spec, &mut cursor, flags, &mut result)?;
+            if let Err(error) = process_long(spec, &mut cursor, flags, &mut result) {
+                pass_unknown_long(error, arg, on_unknown, &mut result.operands)?;
+            }
             continue;
         }
         match classify(arg, has_polarity) {
@@ -190,6 +195,62 @@ pub fn scan<S: Storage>(
             .any(|flag| flag.ch == parsed_char(parsed) && flag.kind == FlagKind::Noop)
     });
     Ok(result)
+}
+
+fn try_numeric_operand<S: Storage>(
+    arg: &str,
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    result: &mut ScanResult,
+) -> bool {
+    let Some((target, value)) = numeric_operand_match(arg, flags) else {
+        return false;
+    };
+    if !result
+        .flags
+        .iter()
+        .any(|parsed| parsed_char(parsed) == target)
+    {
+        result.flags.push(Parsed::Value(target, value.to_owned()));
+    }
+    cursor.advance();
+    true
+}
+
+fn numeric_operand_match<'a, S: Storage>(
+    arg: &'a str,
+    flags: &[FlagDef<S>],
+) -> Option<(char, &'a str)> {
+    flags.iter().find_map(|flag| {
+        let marker = flag.long.as_ref().strip_prefix("\0numeric-operand:")?;
+        let (target, prefix) = marker.split_once(':')?;
+        let target = target.chars().next()?;
+        numeric_operand_value(arg, prefix).map(|value| (target, value))
+    })
+}
+
+fn numeric_operand_value<'a>(arg: &'a str, prefix: &str) -> Option<&'a str> {
+    let value = arg.strip_prefix(prefix)?;
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    match value.split_once(':') {
+        Some((first, last)) if digits(first) && digits(last) => Some(value),
+        None if digits(value) => Some(value),
+        _ => None,
+    }
+}
+
+fn pass_unknown_long(
+    error: Error,
+    arg: &str,
+    on_unknown: OnUnknown,
+    operands: &mut Vec<String>,
+) -> Result<(), Error> {
+    if on_unknown == OnUnknown::PassThrough && matches!(error, Error::UnknownFlag(_)) {
+        operands.push(arg.to_owned());
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 /// A `--name` or `--name=value` token (but not the bare `--` terminator).
@@ -483,12 +544,8 @@ fn extract_value<S: Storage>(
         cursor.advance();
         return Err(Error::MissingValue(format!("-{flag_ch}")));
     }
-    if let Some((default, consume_next, any_value)) = optional_value(def.ch, flags) {
-        if consume_next
-            && cursor
-                .following()
-                .is_some_and(|value| any_value || is_value(value))
-        {
+    if let Some((default, mode)) = optional_value(def.ch, flags) {
+        if cursor.following().is_some_and(|value| mode.consumes(value)) {
             return cursor.next_value(flag_ch);
         }
         cursor.advance();
@@ -684,12 +741,8 @@ fn apply_long_value<S: Storage>(
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
     let value = if let Some(value) = inline {
         value.to_owned()
-    } else if let Some((default, consume_next, any_value)) = optional_value(def.ch, flags) {
-        if consume_next
-            && cursor
-                .peek()
-                .is_some_and(|value| any_value || is_value(value))
-        {
+    } else if let Some((default, mode)) = optional_value(def.ch, flags) {
+        if cursor.peek().is_some_and(|value| mode.consumes(value)) {
             cursor.take_next(&format!("--{name}"))?
         } else {
             default.to_owned()
@@ -708,23 +761,49 @@ fn apply_long_value<S: Storage>(
     Ok(())
 }
 
-fn optional_value<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<(&str, bool, bool)> {
+#[derive(Clone, Copy)]
+enum OptionalMode {
+    Never,
+    Value,
+    Any,
+    Numeric,
+}
+
+impl OptionalMode {
+    fn consumes(self, value: &str) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Value => is_value(value),
+            Self::Any => true,
+            Self::Numeric => optional_numeric_value(value),
+        }
+    }
+}
+
+fn optional_value<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<(&str, OptionalMode)> {
     flags.iter().find_map(|flag| {
-        let text = flag.long.as_ref();
-        let (marker, consume_next, any_value) = text
-            .strip_prefix("\0optional-value:")
-            .map(|marker| (marker, false, false))
-            .or_else(|| {
-                text.strip_prefix("\0optional-next-value:")
-                    .map(|marker| (marker, true, false))
-            })
-            .or_else(|| {
-                text.strip_prefix("\0optional-any-next-value:")
-                    .map(|marker| (marker, true, true))
-            })?;
+        let (marker, mode) = optional_marker(flag.long.as_ref())?;
         let (encoded, default) = marker.split_once(':')?;
-        (encoded.chars().next() == Some(ch)).then_some((default, consume_next, any_value))
+        (encoded.chars().next() == Some(ch)).then_some((default, mode))
     })
+}
+
+fn optional_marker(text: &str) -> Option<(&str, OptionalMode)> {
+    [
+        ("\0optional-value:", OptionalMode::Never),
+        ("\0optional-next-value:", OptionalMode::Value),
+        ("\0optional-any-next-value:", OptionalMode::Any),
+        ("\0optional-numeric-next-value:", OptionalMode::Numeric),
+    ]
+    .into_iter()
+    .find_map(|(prefix, mode)| text.strip_prefix(prefix).map(|value| (value, mode)))
+}
+
+fn optional_numeric_value(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|first| first != '-' && chars.all(|ch| ch.is_ascii_digit()))
 }
 
 fn is_value(value: &str) -> bool {

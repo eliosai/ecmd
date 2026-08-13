@@ -227,7 +227,9 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
     append_equals_only_markers(cmd, &mut defs);
     append_optional_value_markers(cmd, fields, &mut defs);
     append_optional_next_value_markers(cmd, fields, &mut defs);
+    append_optional_numeric_next_value_markers(cmd, fields, &mut defs);
     append_optional_any_next_value_markers(cmd, fields, &mut defs);
+    append_numeric_operand_markers(cmd, fields, &mut defs);
     append_field_group_marker(cmd, fields, &mut defs, "prefixed_values", "prefixed-values");
     append_field_group_marker(cmd, fields, &mut defs, "attached_values", "attached-values");
     append_field_group_marker(
@@ -240,6 +242,14 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
     append_field_group_marker(cmd, fields, &mut defs, "exclusive_flags", "exclusive-flags");
 
     quote! { #(#defs),* }
+}
+
+fn append_numeric_operand_markers(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+    defs: &mut Vec<TokenStream>,
+) {
+    append_value_markers(cmd, fields, defs, "numeric_operands", "numeric-operand");
 }
 
 fn append_optional_any_next_value_markers(
@@ -307,6 +317,20 @@ fn append_optional_next_value_markers(
         defs,
         "optional_next_values",
         "optional-next-value",
+    );
+}
+
+fn append_optional_numeric_next_value_markers(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+    defs: &mut Vec<TokenStream>,
+) {
+    append_value_markers(
+        cmd,
+        fields,
+        defs,
+        "optional_numeric_next_values",
+        "optional-numeric-next-value",
     );
 }
 
