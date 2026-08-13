@@ -29,7 +29,12 @@ pub enum Error {
     /// An abbreviated long option matched more than one declared option.
     AmbiguousOption(String),
     /// A flag that takes no value was given one via `--flag=value`.
-    UnexpectedValue(String),
+    UnexpectedValue {
+        /// The flag that rejected the value.
+        flag: String,
+        /// The value that was provided.
+        value: String,
+    },
     /// A scalar flag was supplied more than once.
     RepeatedFlag(String),
     /// A flag was combined with a mutually exclusive flag.
@@ -72,8 +77,8 @@ impl fmt::Display for Error {
             } => write!(f, "{flag}: {value}: {reason}"),
             Self::UnknownCommand(name) => write!(f, "{name}: unknown command"),
             Self::AmbiguousOption(name) => write!(f, "{name}: option is ambiguous"),
-            Self::UnexpectedValue(name) => {
-                write!(f, "{name}: option doesn't allow an argument")
+            Self::UnexpectedValue { flag, .. } => {
+                write!(f, "{flag}: option doesn't allow an argument")
             }
             Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
             Self::ConflictingFlags { current, previous } => {
