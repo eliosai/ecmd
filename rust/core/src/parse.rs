@@ -560,6 +560,28 @@ fn extract_value<S: Storage>(
         cursor.advance();
         return Err(Error::MissingValue(format!("-{flag_ch}")));
     }
+    if let Some(default) = exact_short_default(flag_ch, flags)
+        && byte_pos == 0
+    {
+        cursor.advance();
+        return Ok(default.to_owned());
+    }
+    if let Some(default) = numeric_next_value(flag_ch, flags) {
+        if byte_pos > 0 {
+            return cursor.next_value(flag_ch);
+        }
+        return match cursor.following() {
+            Some(value) if optional_numeric_value(value) => cursor.next_value(flag_ch),
+            Some(_) => {
+                cursor.advance();
+                Ok(default.to_owned())
+            }
+            None => {
+                cursor.advance();
+                Err(Error::MissingValue(format!("-{flag_ch}")))
+            }
+        };
+    }
     if let Some((default, mode)) = optional_value(def.ch, flags) {
         if cursor.following().is_some_and(|value| mode.consumes(value)) {
             return cursor.next_value(flag_ch);
@@ -757,6 +779,9 @@ fn apply_long_value<S: Storage>(
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
     let value = if let Some(value) = inline {
         value.to_owned()
+    } else if numeric_next_value(def.ch, flags).is_some() {
+        let label = format!("--{name}");
+        cursor.take_next(&label)?
     } else if let Some((default, mode)) = optional_value(def.ch, flags) {
         if cursor.peek().is_some_and(|value| mode.consumes(value)) {
             cursor.take_next(&format!("--{name}"))?
@@ -801,6 +826,22 @@ fn optional_value<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<(&str, O
         let (marker, mode) = optional_marker(flag.long.as_ref())?;
         let (encoded, default) = marker.split_once(':')?;
         (encoded.chars().next() == Some(ch)).then_some((default, mode))
+    })
+}
+
+fn numeric_next_value<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<&str> {
+    flags.iter().find_map(|flag| {
+        let marker = flag.long.as_ref().strip_prefix("\0numeric-next-value:")?;
+        let (encoded, default) = marker.split_once(':')?;
+        (encoded.chars().next() == Some(ch)).then_some(default)
+    })
+}
+
+fn exact_short_default<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<&str> {
+    flags.iter().find_map(|flag| {
+        let marker = flag.long.as_ref().strip_prefix("\0exact-short-default:")?;
+        let (encoded, default) = marker.split_once(':')?;
+        (encoded.chars().next() == Some(ch)).then_some(default)
     })
 }
 

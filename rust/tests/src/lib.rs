@@ -988,6 +988,105 @@ mod tests {
 
     #[derive(Command, Debug)]
     #[command(
+        name = "numeric-next",
+        style = "gnu",
+        tag(numeric_next_values = "number=5")
+    )]
+    struct NumericNextValue {
+        #[flag(short = 'a')]
+        all: bool,
+        #[flag(short = 'n', long = "number-lines")]
+        number: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn numeric_next_requires_and_selectively_consumes_numbering_specs() {
+        let width = NumericNextValue::parse(&["-n", "2", "file"]).unwrap();
+        assert_eq!(width.number.as_deref(), Some("2"));
+        assert_eq!(&*width.args, &["file"]);
+
+        let separator = NumericNextValue::parse(&["-n", "c3", "file"]).unwrap();
+        assert_eq!(separator.number.as_deref(), Some("c3"));
+        assert_eq!(&*separator.args, &["file"]);
+
+        let attached = NumericNextValue::parse(&["-na", "file"]).unwrap();
+        assert_eq!(attached.number.as_deref(), Some("a"));
+        assert_eq!(&*attached.args, &["file"]);
+
+        let clustered = NumericNextValue::parse(&["-an", "-x", "file"]).unwrap();
+        assert_eq!(clustered.number.as_deref(), Some("-x"));
+        assert_eq!(&*clustered.args, &["file"]);
+
+        let missing = NumericNextValue::parse(&["-n"]).unwrap_err();
+        assert_eq!(missing, ecmd::error::Error::MissingValue("-n".to_owned()));
+
+        let filename = NumericNextValue::parse(&["-n", "file"]).unwrap();
+        assert_eq!(filename.number.as_deref(), Some("5"));
+        assert_eq!(&*filename.args, &["file"]);
+
+        let long = NumericNextValue::parse(&["--number-lines", "c3", "file"]).unwrap();
+        assert_eq!(long.number.as_deref(), Some("c3"));
+        assert_eq!(&*long.args, &["file"]);
+
+        let long_filename = NumericNextValue::parse(&["--number-lines", "file"]).unwrap();
+        assert_eq!(long_filename.number.as_deref(), Some("file"));
+        assert!(long_filename.args.is_empty());
+
+        let long_option = NumericNextValue::parse(&["--number-lines", "-x", "file"]).unwrap();
+        assert_eq!(long_option.number.as_deref(), Some("-x"));
+        assert_eq!(&*long_option.args, &["file"]);
+
+        let long_missing = NumericNextValue::parse(&["--number-lines"]).unwrap_err();
+        assert_eq!(
+            long_missing,
+            ecmd::error::Error::MissingValue("--number-lines".to_owned())
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "exact-short-default",
+        style = "gnu",
+        tag(exact_short_defaults = "expand=8")
+    )]
+    struct ExactShortDefault {
+        #[flag(short = 'a')]
+        all: bool,
+        #[flag(short = 'e', long = "expand")]
+        expand: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn exact_short_default_does_not_weaken_clustered_or_long_values() {
+        let exact = ExactShortDefault::parse(&["-e", "file"]).unwrap();
+        assert_eq!(exact.expand.as_deref(), Some("8"));
+        assert_eq!(&*exact.args, &["file"]);
+
+        let clustered = ExactShortDefault::parse(&["-ae", "X", "file"]).unwrap();
+        assert_eq!(clustered.expand.as_deref(), Some("X"));
+        assert_eq!(&*clustered.args, &["file"]);
+
+        let clustered_missing = ExactShortDefault::parse(&["-ae"]).unwrap_err();
+        assert_eq!(
+            clustered_missing,
+            ecmd::error::Error::MissingValue("-e".to_owned())
+        );
+
+        let long = ExactShortDefault::parse(&["--expand", "X", "file"]).unwrap();
+        assert_eq!(long.expand.as_deref(), Some("X"));
+        assert_eq!(&*long.args, &["file"]);
+
+        let long_missing = ExactShortDefault::parse(&["--expand"]).unwrap_err();
+        assert_eq!(
+            long_missing,
+            ecmd::error::Error::MissingValue("--expand".to_owned())
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
         name = "dense-flags",
         style = "gnu",
         tag(optional_values = "unified=3,context=3"),

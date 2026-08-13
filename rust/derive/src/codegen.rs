@@ -228,6 +228,8 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
     append_optional_value_markers(cmd, fields, &mut defs);
     append_optional_next_value_markers(cmd, fields, &mut defs);
     append_optional_numeric_next_value_markers(cmd, fields, &mut defs);
+    append_value_markers(cmd, fields, &mut defs, "numeric_next_values", "numeric-next-value");
+    append_value_markers(cmd, fields, &mut defs, "exact_short_defaults", "exact-short-default");
     append_optional_any_next_value_markers(cmd, fields, &mut defs);
     append_numeric_operand_markers(cmd, fields, &mut defs);
     append_field_group_marker(cmd, fields, &mut defs, "prefixed_values", "prefixed-values");
