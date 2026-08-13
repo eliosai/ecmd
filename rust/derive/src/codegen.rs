@@ -228,8 +228,20 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
     append_optional_value_markers(cmd, fields, &mut defs);
     append_optional_next_value_markers(cmd, fields, &mut defs);
     append_optional_numeric_next_value_markers(cmd, fields, &mut defs);
-    append_value_markers(cmd, fields, &mut defs, "numeric_next_values", "numeric-next-value");
-    append_value_markers(cmd, fields, &mut defs, "exact_short_defaults", "exact-short-default");
+    append_value_markers(
+        cmd,
+        fields,
+        &mut defs,
+        "numeric_next_values",
+        "numeric-next-value",
+    );
+    append_value_markers(
+        cmd,
+        fields,
+        &mut defs,
+        "exact_short_defaults",
+        "exact-short-default",
+    );
     append_optional_any_next_value_markers(cmd, fields, &mut defs);
     append_numeric_operand_markers(cmd, fields, &mut defs);
     append_field_group_marker(cmd, fields, &mut defs, "prefixed_values", "prefixed-values");
@@ -604,16 +616,7 @@ fn gen_meta(
 }
 
 fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let mut defs: Vec<_> = fields
-        .iter()
-        .filter_map(|cf| flag_def_literal(cf, fields, cmd))
-        .collect();
-    for ch in cmd.noop.chars() {
-        defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true }
-        });
-    }
-    quote! { #(#defs),* }
+    gen_flag_defs(cmd, fields)
 }
 
 /// One `FlagDef { … }` literal for a flag field, shared by parse and meta codegen.

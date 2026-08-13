@@ -915,6 +915,15 @@ mod tests {
         assert_eq!(long.legacy.as_deref(), Some("VALUE"));
     }
 
+    #[test]
+    fn owned_definition_keeps_optional_value_parsing() {
+        OptionalValue::def()
+            .clone()
+            .into_owned()
+            .scan(&["--replace"])
+            .expect("owned metadata parses like the command");
+    }
+
     #[derive(Command, Debug)]
     #[command(
         name = "long-optional-value",
