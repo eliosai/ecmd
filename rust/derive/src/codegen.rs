@@ -236,6 +236,13 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
         cmd,
         fields,
         &mut defs,
+        "separated_values",
+        "separated-values",
+    );
+    append_field_group_marker(
+        cmd,
+        fields,
+        &mut defs,
         "first_numeric_value",
         "first-numeric-value",
     );

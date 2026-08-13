@@ -158,14 +158,19 @@ pub fn scan<S: Storage>(
             continue;
         }
         if gnu && is_long(arg) {
+            let operand_count = result.operands.len();
             let spec = arg.strip_prefix("--").unwrap_or_default();
             if let Err(error) = process_long(spec, &mut cursor, flags, &mut result) {
                 pass_unknown_long(error, arg, on_unknown, &mut result.operands)?;
+            }
+            if !permute && result.operands.len() > operand_count {
+                break;
             }
             continue;
         }
         match classify(arg, has_polarity) {
             ArgClass::Flags(polarity, chars) => {
+                let operand_count = result.operands.len();
                 process_cluster(
                     chars,
                     polarity,
@@ -175,6 +180,9 @@ pub fn scan<S: Storage>(
                     style,
                     &mut result,
                 )?;
+                if !permute && result.operands.len() > operand_count {
+                    break;
+                }
             }
             // GNU permutation: an operand does not stop option scanning. With
             // `permute` off (POSIX order, e.g. `basename`), the first operand does.
@@ -453,11 +461,16 @@ fn try_passthrough<S: Storage>(
 }
 
 fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style) -> bool {
-    for &b in chars.as_bytes() {
+    for (index, &b) in chars.as_bytes().iter().enumerate() {
         match find_flag(char::from(b), flags) {
             None if implicit_short_action(char::from(b), style).is_some() => {}
             None => return true,
             Some(def) if matches!(def.kind, FlagKind::Value | FlagKind::PolarValue) => {
+                if index + 1 < chars.len()
+                    && marker_chars(flags, "separated-values").contains(def.ch)
+                {
+                    return true;
+                }
                 return false;
             }
             _ => {}
@@ -536,6 +549,9 @@ fn extract_value<S: Storage>(
     let after = byte_pos.saturating_add(1);
     let remainder = chars.get(after..).unwrap_or_default();
     if !remainder.is_empty() {
+        if marker_chars(flags, "separated-values").contains(flag_ch) {
+            return Err(Error::UnknownFlag(format!("-{chars}")));
+        }
         cursor.advance();
         // clap parity: a single leading `=` is the attached-value separator (`-c=5` → `5`).
         return Ok(remainder.strip_prefix('=').unwrap_or(remainder).to_owned());

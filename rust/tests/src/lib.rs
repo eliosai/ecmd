@@ -1072,6 +1072,35 @@ mod tests {
 
     #[derive(Command, Debug)]
     #[command(
+        name = "separated",
+        style = "gnu",
+        lenient,
+        no_permute,
+        tag(separated_values = "device")
+    )]
+    struct SeparatedValue {
+        #[flag(short = 'F', long = "file")]
+        device: Option<String>,
+        #[flag(short = 'a', long = "all")]
+        all: bool,
+        args: Operands,
+    }
+
+    #[test]
+    fn separated_value_tag_leaves_an_attached_short_token_intact() {
+        let separated = SeparatedValue::parse(&["-F", "device"]).unwrap();
+        assert_eq!(separated.device.as_deref(), Some("device"));
+        assert!(!separated.all);
+        assert!(separated.args.is_empty());
+
+        let attached = SeparatedValue::parse(&["-Fdevice", "-a"]).unwrap();
+        assert_eq!(attached.device, None);
+        assert!(!attached.all);
+        assert_eq!(&*attached.args, &["-Fdevice", "-a"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
         name = "numeric-first",
         style = "gnu",
         tag(first_numeric_value = "width")
