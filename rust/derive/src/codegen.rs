@@ -224,6 +224,7 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
         });
     }
     append_exact_long_marker(cmd, &mut defs);
+    append_no_implicit_version_marker(cmd, &mut defs);
     append_equals_only_markers(cmd, &mut defs);
     append_optional_value_markers(cmd, fields, &mut defs);
     append_optional_next_value_markers(cmd, fields, &mut defs);
@@ -432,6 +433,20 @@ fn append_exact_long_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
     defs.push(quote! {
         ::ecmd::parse::FlagDef {
             ch: '\0', long: "\0exact-long", aliases: &[],
+            kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
+            value_name: "", hidden: true, implemented: true,
+            repeatable: false, allow_hyphen_values: true
+        }
+    });
+}
+
+fn append_no_implicit_version_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
+    if !cmd.no_implicit_version {
+        return;
+    }
+    defs.push(quote! {
+        ::ecmd::parse::FlagDef {
+            ch: '\0', long: "\0no-implicit-version", aliases: &[],
             kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
             value_name: "", hidden: true, implemented: true,
             repeatable: false, allow_hyphen_values: true

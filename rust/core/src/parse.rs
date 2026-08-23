@@ -463,7 +463,7 @@ fn try_passthrough<S: Storage>(
 fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style) -> bool {
     for (index, &b) in chars.as_bytes().iter().enumerate() {
         match find_flag(char::from(b), flags) {
-            None if implicit_short_action(char::from(b), style).is_some() => {}
+            None if implicit_short_action(char::from(b), style, flags).is_some() => {}
             None => return true,
             Some(def) if matches!(def.kind, FlagKind::Value | FlagKind::PolarValue) => {
                 if index + 1 < chars.len()
@@ -490,7 +490,7 @@ fn parse_known_cluster<S: Storage>(
     for (bi, &byte) in chars.as_bytes().iter().enumerate() {
         let ch = char::from(byte);
         let Some(def) = find_flag(ch, flags) else {
-            return Err(implicit_short_action(ch, style)
+            return Err(implicit_short_action(ch, style, flags)
                 .unwrap_or_else(|| Error::UnknownFlag(format!("-{ch}"))));
         };
         if !def.implemented {
@@ -527,15 +527,26 @@ fn parse_known_cluster<S: Storage>(
     Ok(())
 }
 
-fn implicit_short_action(ch: char, style: Style) -> Option<Error> {
+fn implicit_short_action<S: Storage>(
+    ch: char,
+    style: Style,
+    flags: &[FlagDef<S>],
+) -> Option<Error> {
     if style != Style::Gnu {
         return None;
     }
     match ch {
         'h' => Some(Error::HelpRequested),
-        'V' => Some(Error::VersionRequested),
+        'V' if !no_implicit_version(flags) => Some(Error::VersionRequested),
         _ => None,
     }
+}
+
+/// Whether the command opted out of the implicit GNU `-V` reservation.
+fn no_implicit_version<S: Storage>(flags: &[FlagDef<S>]) -> bool {
+    flags
+        .iter()
+        .any(|flag| flag.hidden && flag.long.as_ref() == "\0no-implicit-version")
 }
 
 fn extract_value<S: Storage>(
@@ -1000,6 +1011,22 @@ mod tests {
         }
     }
 
+    fn no_implicit_version_marker() -> FlagDef {
+        FlagDef {
+            ch: '\0',
+            kind: FlagKind::Noop,
+            long: "\0no-implicit-version",
+            aliases: &[],
+            clears: &[],
+            desc: "",
+            value_name: "",
+            hidden: true,
+            implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
+        }
+    }
+
     fn noop_flag(ch: char) -> FlagDef {
         FlagDef {
             ch,
@@ -1212,6 +1239,15 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn no_implicit_version_marker_rejects_short_v_but_keeps_help() {
+        let flags = [no_implicit_version_marker()];
+        let result = scan(&["-V"], &flags, OnUnknown::Reject, Style::Gnu, true);
+        assert_eq!(result.unwrap_err(), Error::UnknownFlag("-V".to_owned()));
+        let result = scan(&["-h"], &flags, OnUnknown::Reject, Style::Gnu, true);
+        assert_eq!(result.unwrap_err(), Error::HelpRequested);
     }
 
     #[test]

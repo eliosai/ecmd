@@ -15,6 +15,7 @@ pub struct CommandAttrs {
     pub extra_help: Vec<String>,
     pub no_permute: bool,
     pub no_override: bool,
+    pub no_implicit_version: bool,
 }
 
 impl CommandAttrs {
@@ -28,6 +29,7 @@ impl CommandAttrs {
         let mut extra_help = Vec::new();
         let mut no_permute = false;
         let mut no_override = false;
+        let mut no_implicit_version = false;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("command")) {
             attr.parse_nested_meta(|meta| {
@@ -41,6 +43,8 @@ impl CommandAttrs {
                     no_permute = true;
                 } else if meta.path.is_ident("no_override") {
                     no_override = true;
+                } else if meta.path.is_ident("no_implicit_version") {
+                    no_implicit_version = true;
                 } else if meta.path.is_ident("noop") {
                     noop = parse_lit_str(&meta)?;
                 } else if meta.path.is_ident("short_doc") {
@@ -89,6 +93,7 @@ impl CommandAttrs {
             extra_help,
             no_permute,
             no_override,
+            no_implicit_version,
         })
     }
 }
