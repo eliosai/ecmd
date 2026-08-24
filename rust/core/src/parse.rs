@@ -88,6 +88,28 @@ pub struct FlagDef<S: Storage = Static> {
 }
 
 impl FlagDef<Static> {
+    /// A zero-valued base so a literal survives new fields being added
+    pub const EMPTY: Self = Self {
+        ch: '\0',
+        long: "",
+        aliases: &[],
+        kind: FlagKind::Bool,
+        clears: &[],
+        desc: "",
+        value_name: "",
+        hidden: false,
+        implemented: false,
+        repeatable: false,
+        allow_hyphen_values: false,
+        possible_values: &[],
+        help_values: &[],
+        default_value: "",
+        help_label: "",
+        visible_aliases: &[],
+    };
+}
+
+impl FlagDef<Static> {
     pub(crate) fn into_owned(self) -> FlagDef<Owned> {
         FlagDef {
             ch: self.ch,

@@ -120,6 +120,57 @@ pub struct CommandDef<S: Storage = Static> {
     pub exit_status: S::List<S::Text>,
 }
 
+impl CommandDef<Static> {
+    /// A zero-valued base so a literal survives new fields being added
+    pub const EMPTY: Self = Self {
+        name: "",
+        about: "",
+        short_doc: "",
+        style: Style::Posix,
+        help_style: HelpStyle::Bash,
+        on_unknown: OnUnknown::Reject,
+        permute: false,
+        flags: &[],
+        positionals: &[],
+        has_rest: false,
+        rest_label: "",
+        rest_hidden: false,
+        rest_desc: "",
+        rest_default: "",
+        rest_required: false,
+        tags: &[],
+        description: &[],
+        extra: &[],
+        exit_status: &[],
+    };
+}
+
+impl Default for CommandDef<Owned> {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            about: String::new(),
+            short_doc: String::new(),
+            style: Style::Posix,
+            help_style: HelpStyle::Bash,
+            on_unknown: OnUnknown::Reject,
+            permute: false,
+            flags: Vec::new(),
+            positionals: Vec::new(),
+            has_rest: false,
+            rest_label: String::new(),
+            rest_hidden: false,
+            rest_desc: String::new(),
+            rest_default: String::new(),
+            rest_required: false,
+            tags: Vec::new(),
+            description: Vec::new(),
+            extra: Vec::new(),
+            exit_status: Vec::new(),
+        }
+    }
+}
+
 /// Runtime-owned command metadata
 pub type OwnedCommandDef = CommandDef<Owned>;
 
