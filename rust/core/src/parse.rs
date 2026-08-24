@@ -77,6 +77,8 @@ pub struct FlagDef<S: Storage = Static> {
     pub allow_hyphen_values: bool,
     /// The accepted values, when the flag admits only a fixed set.
     pub possible_values: S::List<S::Text>,
+    /// The values help lists, when they differ from the accepted set.
+    pub help_values: S::List<S::Text>,
     /// The value used when the flag is absent; none when empty.
     pub default_value: S::Text,
     /// Replaces the generated label in help; generated when empty.
@@ -105,6 +107,11 @@ impl FlagDef<Static> {
             allow_hyphen_values: self.allow_hyphen_values,
             possible_values: self
                 .possible_values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            help_values: self
+                .help_values
                 .iter()
                 .map(|value| (*value).to_owned())
                 .collect(),
@@ -998,6 +1005,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1018,6 +1026,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1038,6 +1047,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1058,6 +1068,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1078,6 +1089,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1437,6 +1449,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1471,6 +1484,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1505,6 +1519,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1540,6 +1555,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1560,6 +1576,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1821,6 +1838,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1867,6 +1885,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],

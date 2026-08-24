@@ -115,6 +115,7 @@ pub struct FlagAttrs {
     pub repeat: RepeatAttr,
     pub allow_hyphen_values: bool,
     pub possible_values: Vec<String>,
+    pub help_values: Vec<String>,
     pub default_value: String,
     pub help_label: String,
     pub visible_aliases: Vec<String>,
@@ -179,12 +180,19 @@ impl FlagAttrs {
         let mut repeat = RepeatAttr::Default;
         let mut allow_hyphen_values = true;
         let mut possible_values: Vec<String> = Vec::new();
+        let mut help_values: Vec<String> = Vec::new();
         let mut default_value = String::new();
         let mut help_label = String::new();
         let mut visible_aliases: Vec<String> = Vec::new();
 
         attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("values") {
+            if meta.path.is_ident("help_values") {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let items = content
+                    .parse_terminated(<syn::LitStr as syn::parse::Parse>::parse, Token![,])?;
+                help_values.extend(items.into_iter().map(|item| item.value()));
+            } else if meta.path.is_ident("values") {
                 let content;
                 syn::parenthesized!(content in meta.input);
                 let items = content
@@ -241,6 +249,7 @@ impl FlagAttrs {
             repeat,
             allow_hyphen_values,
             possible_values,
+            help_values,
             default_value,
             help_label,
             visible_aliases,

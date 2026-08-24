@@ -687,7 +687,12 @@ fn clap_flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
     if !default.is_empty() {
         desc.push_str(&format!(" [default: {default}]"));
     }
-    let values = flag.possible_values.as_ref();
+    let listed = flag.help_values.as_ref();
+    let values = if listed.is_empty() {
+        flag.possible_values.as_ref()
+    } else {
+        listed
+    };
     if !values.is_empty() {
         let joined = values
             .iter()
@@ -849,6 +854,7 @@ mod tests {
         repeatable: false,
         allow_hyphen_values: true,
         possible_values: &[],
+        help_values: &[],
         default_value: "",
         help_label: "",
         visible_aliases: &[],
@@ -1003,6 +1009,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1020,6 +1027,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1037,6 +1045,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1228,6 +1237,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1245,6 +1255,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1265,6 +1276,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1282,6 +1294,7 @@ mod tests {
             repeatable: false,
             allow_hyphen_values: true,
             possible_values: &[],
+            help_values: &[],
             default_value: "",
             help_label: "",
             visible_aliases: &[],
@@ -1426,6 +1439,7 @@ mod tests {
                 repeatable: false,
                 allow_hyphen_values: true,
                 possible_values: &[],
+                help_values: &[],
                 default_value: "",
                 help_label: "",
                 visible_aliases: &[],
@@ -1443,6 +1457,7 @@ mod tests {
                 repeatable: false,
                 allow_hyphen_values: true,
                 possible_values: &[],
+                help_values: &[],
                 default_value: "",
                 help_label: "",
                 visible_aliases: &[],
@@ -1560,6 +1575,7 @@ Options:
                 repeatable: false,
                 allow_hyphen_values: true,
                 possible_values: &[],
+                help_values: &[],
                 default_value: "",
                 help_label: "",
                 visible_aliases: &["silent"],
@@ -1577,6 +1593,7 @@ Options:
                 repeatable: false,
                 allow_hyphen_values: true,
                 possible_values: &["always", "auto", "never"],
+                help_values: &[],
                 default_value: "auto",
                 help_label: "",
                 visible_aliases: &[],

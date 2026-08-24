@@ -223,7 +223,7 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
 
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true, possible_values: &[], default_value: "", help_label: "", visible_aliases: &[] }
+            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true, possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[] }
         });
     }
     append_exact_long_marker(cmd, &mut defs);
@@ -311,7 +311,7 @@ fn append_field_group_marker(
                 kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                 value_name: "", hidden: true, implemented: true,
                 repeatable: false, allow_hyphen_values: true,
-                possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
+                possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
             }
         });
     }
@@ -400,7 +400,7 @@ fn append_value_markers(
                     kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                     value_name: "", hidden: true, implemented: true,
                     repeatable: false, allow_hyphen_values: true,
-                    possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
+                    possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
                 }
             });
         }
@@ -425,7 +425,7 @@ fn append_equals_only_markers(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
                     kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                     value_name: "", hidden: true, implemented: true,
                     repeatable: false, allow_hyphen_values: true,
-                    possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
+                    possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
                 }
             });
         }
@@ -442,7 +442,7 @@ fn append_exact_long_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
             kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
             value_name: "", hidden: true, implemented: true,
             repeatable: false, allow_hyphen_values: true,
-            possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
+            possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
         }
     });
 }
@@ -457,7 +457,7 @@ fn append_no_implicit_version_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStr
             kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
             value_name: "", hidden: true, implemented: true,
             repeatable: false, allow_hyphen_values: true,
-            possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
+            possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
         }
     });
 }
@@ -737,6 +737,9 @@ fn flag_def_literal(
     let possible_values: Vec<String> = flag_attrs(&cf.role)
         .map(|attrs| attrs.possible_values.clone())
         .unwrap_or_default();
+    let help_values: Vec<String> = flag_attrs(&cf.role)
+        .map(|attrs| attrs.help_values.clone())
+        .unwrap_or_default();
     let default_value = flag_attrs(&cf.role)
         .map(|attrs| attrs.default_value.clone())
         .unwrap_or_default();
@@ -747,7 +750,7 @@ fn flag_def_literal(
         .map(|attrs| attrs.visible_aliases.clone())
         .unwrap_or_default();
     Some(quote! {
-        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values, possible_values: &[#(#possible_values),*], default_value: #default_value, help_label: #help_label, visible_aliases: &[#(#visible_aliases),*] }
+        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values, possible_values: &[#(#possible_values),*], help_values: &[#(#help_values),*], default_value: #default_value, help_label: #help_label, visible_aliases: &[#(#visible_aliases),*] }
     })
 }
 
