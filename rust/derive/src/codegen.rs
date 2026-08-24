@@ -549,12 +549,12 @@ fn gen_clears_resets(targets: &[Ident], all: &[ClassifiedField<'_>]) -> TokenStr
 }
 
 fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
+    let checks = gen_required_positional_checks(fields);
     let mut stmts = Vec::new();
     let mut idx = 0_usize;
 
     for cf in fields {
         let id = cf.ident;
-        let name = id.to_string();
         match &cf.role {
             FieldRole::OptionalPositional => {
                 stmts.push(quote! { #id = result.operands.get(#idx).cloned(); });
@@ -562,8 +562,7 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
             }
             FieldRole::RequiredPositional => {
                 stmts.push(quote! {
-                    #id = result.operands.get(#idx).cloned()
-                        .ok_or_else(|| ::ecmd::error::Error::MissingRequired(#name.to_owned()))?;
+                    #id = result.operands.get(#idx).cloned().unwrap_or_default();
                 });
                 idx = idx.saturating_add(1);
             }
@@ -577,7 +576,40 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
             _ => {}
         }
     }
-    quote! { #(#stmts)* }
+    quote! { #checks #(#stmts)* }
+}
+
+/// Collect every missing required positional before assigning any of them,
+/// so the reported error names all of them, not just the first.
+fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenStream {
+    let mut checks = Vec::new();
+    let mut idx = 0_usize;
+
+    for cf in fields {
+        let name = cf.ident.to_string();
+        match &cf.role {
+            FieldRole::OptionalPositional => idx = idx.saturating_add(1),
+            FieldRole::RequiredPositional => {
+                checks.push(quote! {
+                    if result.operands.get(#idx).is_none() {
+                        __missing_required.push(#name.to_owned());
+                    }
+                });
+                idx = idx.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+    if checks.is_empty() {
+        return TokenStream::new();
+    }
+    quote! {
+        let mut __missing_required: ::std::vec::Vec<::std::string::String> = ::std::vec::Vec::new();
+        #(#checks)*
+        if !__missing_required.is_empty() {
+            return Err(::ecmd::error::Error::MissingRequired(__missing_required));
+        }
+    }
 }
 
 // ── Meta codegen ────────────────────────────────────────────────

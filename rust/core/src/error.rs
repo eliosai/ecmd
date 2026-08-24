@@ -13,8 +13,8 @@ pub enum Error {
     UnimplementedFlag(String),
     /// A flag that requires a value was not given one.
     MissingValue(String),
-    /// A required positional argument was not provided.
-    MissingRequired(String),
+    /// One or more required positional arguments were not provided.
+    MissingRequired(Vec<String>),
     /// A flag's value could not be parsed into the expected type.
     InvalidValue {
         /// The flag that received the bad value.
@@ -67,8 +67,8 @@ impl fmt::Display for Error {
             Self::MissingValue(flag) => {
                 write!(f, "{flag}: option requires an argument")
             }
-            Self::MissingRequired(name) => {
-                write!(f, "missing required argument: {name}")
+            Self::MissingRequired(names) => {
+                write!(f, "missing required argument: {}", names.join(", "))
             }
             Self::InvalidValue {
                 flag,
@@ -129,8 +129,14 @@ mod tests {
 
     #[test]
     fn missing_required_displays_correctly() {
-        let e = Error::MissingRequired("target".into());
+        let e = Error::MissingRequired(vec!["target".into()]);
         assert_eq!(e.to_string(), "missing required argument: target");
+    }
+
+    #[test]
+    fn missing_required_displays_all_names() {
+        let e = Error::MissingRequired(vec!["file1".into(), "file2".into()]);
+        assert_eq!(e.to_string(), "missing required argument: file1, file2");
     }
 
     #[test]
