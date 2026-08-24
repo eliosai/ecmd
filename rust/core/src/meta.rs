@@ -632,7 +632,7 @@ where
         self.flags()
             .iter()
             .filter(|flag| !flag.hidden && !flag.desc.as_ref().is_empty())
-            .filter(|flag| flag.ch != 'h' && flag.ch != 'V')
+            .filter(|flag| !matches!(flag.long.as_ref(), "help" | "version"))
             .map(|flag| (util_linux_label(flag), flag.desc.as_ref().to_owned()))
             .collect()
     }
@@ -1851,7 +1851,10 @@ fn push_util_linux_entry(out: &mut String, label: &str, desc: &str, width: usize
         out.push('\n');
     }
     for line in lines {
-        out.push_str(&" ".repeat(width + 2));
+        // an authored indent places the line itself; otherwise it hangs two past the column
+        if !line.starts_with(' ') {
+            out.push_str(&" ".repeat(width + 2));
+        }
         out.push_str(line);
         out.push('\n');
     }
