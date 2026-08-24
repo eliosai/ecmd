@@ -449,6 +449,20 @@ where
         {
             let help = entries.remove(entries.len() - 2);
             entries.insert(0, help);
+        } else if let Some(long) = self
+            .tags()
+            .iter()
+            .find_map(|(name, value)| (name.as_ref() == "help_before").then(|| value.as_ref()))
+        {
+            let needle = format!("--{long}");
+            if let Some(position) = entries.iter().position(|(label, _)| {
+                label
+                    .split_whitespace()
+                    .any(|word| word.trim_end_matches(',') == needle)
+            }) {
+                let help = entries.remove(entries.len() - 2);
+                entries.insert(position, help);
+            }
         }
         out.push_str("\nOptions:\n");
         push_clap_entries(out, &entries);
@@ -665,6 +679,12 @@ fn clap_flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
         label.push('-');
         label.push(flag.ch);
         if flag.long.as_ref().is_empty() {
+            let value_name = flag.value_name.as_ref();
+            if !value_name.is_empty() {
+                label.push_str(" <");
+                label.push_str(value_name);
+                label.push('>');
+            }
             return label;
         }
         label.push_str(", ");
@@ -772,20 +792,24 @@ const CLAP_TERM_WIDTH: usize = 100;
 fn clap_wrap(desc: &str, room: usize) -> Vec<String> {
     let mut out = Vec::new();
     for paragraph in desc.lines() {
-        let mut line = String::new();
+        let indent: String = paragraph
+            .chars()
+            .take_while(|character| *character == ' ')
+            .collect();
+        let mut line = indent.clone();
         let mut gap = String::new();
-        for token in paragraph.split(' ') {
+        for token in paragraph.trim_start_matches(' ').split(' ') {
             if token.is_empty() {
                 gap.push(' ');
                 continue;
             }
-            let separator = if line.is_empty() {
+            let separator = if line == indent {
                 String::new()
             } else {
                 format!("{gap} ")
             };
-            if !line.is_empty() && line.len() + separator.len() + token.len() > room {
-                out.push(std::mem::take(&mut line));
+            if line != indent && line.len() + separator.len() + token.len() > room {
+                out.push(std::mem::replace(&mut line, indent.clone()));
             } else {
                 line.push_str(&separator);
             }
