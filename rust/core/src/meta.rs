@@ -596,7 +596,12 @@ where
         let width = self.tag_width("help_width", natural);
         out.push_str("\nOptions:\n");
         for (label, desc) in &entries {
-            push_util_linux_entry(&mut out, label, desc, width);
+            // a row with neither label nor description is a separator inside the block
+            if label.is_empty() && desc.is_empty() {
+                out.push('\n');
+            } else {
+                push_util_linux_entry(&mut out, label, desc, width);
+            }
         }
 
         if self.spaced_help() {
@@ -618,6 +623,14 @@ where
                 self.tag_or("version_desc", "output version information and exit"),
                 pair,
             );
+        }
+
+        for block in self.extra.as_ref() {
+            out.push('\n');
+            for line in block.as_ref().lines() {
+                out.push_str(line);
+                out.push('\n');
+            }
         }
 
         if !self.has_tag("no_trailer") {
@@ -1614,6 +1627,18 @@ mod tests {
         .help();
         assert!(help.contains(
             "Options:\n -<sig>                    signal to send (either number or name)\n -s, --single-shot"
+        ));
+    }
+
+    #[test]
+    fn util_linux_help_separates_rows_and_appends_extra_blocks() {
+        let mut def = util_linux_def(&[("help_row", "1\t\t")]);
+        static EXTRA: [&str; 1] = ["Arguments:\n Values for <length> may carry a suffix."];
+        def.extra = &EXTRA;
+        let help = def.help();
+        assert!(help.contains("return one PID only\n\n -o, --omit-pid"));
+        assert!(help.contains(
+            "\n\nArguments:\n Values for <length> may carry a suffix.\n\nFor more details"
         ));
     }
 
