@@ -8,6 +8,7 @@ use syn::{Expr, Field, Ident, Lit, Token};
 pub struct CommandAttrs {
     pub name: String,
     pub style: String,
+    pub help_style: Option<String>,
     pub lenient: bool,
     pub noop: String,
     pub tags: Vec<(String, String)>,
@@ -22,6 +23,7 @@ impl CommandAttrs {
     pub fn from_ast(attrs: &[syn::Attribute]) -> syn::Result<Self> {
         let mut name = String::new();
         let mut style = "posix".to_owned();
+        let mut help_style: Option<String> = None;
         let mut lenient = false;
         let mut noop = String::new();
         let mut tags = Vec::new();
@@ -37,6 +39,8 @@ impl CommandAttrs {
                     name = parse_lit_str(&meta)?;
                 } else if meta.path.is_ident("style") {
                     style = parse_lit_str(&meta)?;
+                } else if meta.path.is_ident("help_style") {
+                    help_style = Some(parse_lit_str(&meta)?);
                 } else if meta.path.is_ident("lenient") {
                     lenient = true;
                 } else if meta.path.is_ident("no_permute") {
@@ -86,6 +90,7 @@ impl CommandAttrs {
         Ok(Self {
             name,
             style,
+            help_style,
             lenient,
             noop,
             tags,

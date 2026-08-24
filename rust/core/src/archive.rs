@@ -6,7 +6,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::meta::{CommandDef, Owned, PositionalDef};
 use crate::parse::FlagDef;
 use crate::parse::{FlagKind, OnUnknown};
-use crate::style::Style;
+use crate::style::{HelpStyle, Style};
 
 /// Archive adapter for an owned flag definition
 #[derive(Archive, Serialize, Deserialize)]
@@ -70,6 +70,7 @@ pub struct CommandDefDef {
     about: String,
     short_doc: String,
     style: Style,
+    help_style: HelpStyle,
     on_unknown: OnUnknown,
     permute: bool,
     #[rkyv(with = Map<FlagDefDef>)]
@@ -90,6 +91,7 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             about: value.about,
             short_doc: value.short_doc,
             style: value.style,
+            help_style: value.help_style,
             on_unknown: value.on_unknown,
             permute: value.permute,
             flags: value.flags,
@@ -119,6 +121,7 @@ mod tests {
             about: "Print a greeting".to_owned(),
             short_doc: String::new(),
             style: Style::Posix,
+            help_style: HelpStyle::Bash,
             on_unknown: OnUnknown::Reject,
             permute: false,
             flags: vec![FlagDef {

@@ -623,6 +623,7 @@ fn gen_meta(
     let about = &sections.about;
     let short_doc = &cmd.short_doc;
     let style = style_tokens(cmd);
+    let help_style = help_style_tokens(cmd);
     let on_unknown = if cmd.lenient {
         quote! { ::ecmd::parse::OnUnknown::PassThrough }
     } else {
@@ -649,6 +650,7 @@ fn gen_meta(
             about: #about,
             short_doc: #short_doc,
             style: #style,
+            help_style: #help_style,
             on_unknown: #on_unknown,
             permute: #permute,
             flags: &[#flag_metas],
@@ -722,6 +724,19 @@ fn style_tokens(cmd: &CommandAttrs) -> TokenStream {
         quote! { ::ecmd::style::Style::Gnu }
     } else {
         quote! { ::ecmd::style::Style::Posix }
+    }
+}
+
+/// The declared help dialect, defaulting to the one implied by the parse style.
+fn help_style_tokens(cmd: &CommandAttrs) -> TokenStream {
+    match cmd.help_style.as_deref() {
+        Some("bash") => quote! { ::ecmd::style::HelpStyle::Bash },
+        Some("gnu") => quote! { ::ecmd::style::HelpStyle::Gnu },
+        Some("clap") => quote! { ::ecmd::style::HelpStyle::Clap },
+        _ => {
+            let style = style_tokens(cmd);
+            quote! { ::ecmd::style::HelpStyle::from_parse_style(#style) }
+        },
     }
 }
 

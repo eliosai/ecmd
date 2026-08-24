@@ -30,7 +30,7 @@
 
 use crate::error::Error;
 use crate::parse::{FlagDef, FlagKind, OnUnknown};
-use crate::style::Style;
+use crate::style::{HelpStyle, Style};
 
 /// Storage used by command metadata
 pub trait Storage: 'static {
@@ -88,6 +88,8 @@ pub struct CommandDef<S: Storage = Static> {
     pub short_doc: S::Text,
     /// Parsing style.
     pub style: Style,
+    /// Help dialect rendered by [`CommandDef::help`].
+    pub help_style: HelpStyle,
     /// How unrecognized flags are handled.
     pub on_unknown: OnUnknown,
     /// Whether options may follow positional operands.
@@ -224,8 +226,10 @@ where
     /// Help text in the command's style: bash-builtin for POSIX, GNU for Gnu.
     #[must_use]
     pub fn help(&self) -> String {
-        if self.style == Style::Gnu {
-            return self.gnu_help();
+        match self.help_style {
+            HelpStyle::Gnu => return self.gnu_help(),
+            HelpStyle::Clap => return self.clap_help(),
+            HelpStyle::Bash => {},
         }
         let mut out = String::with_capacity(512);
 
@@ -278,6 +282,95 @@ where
         }
 
         out
+    }
+
+    /// Clap-style help: about, `Usage:`, `Arguments:`, then aligned `Options:`.
+    ///
+    /// Line breaks come from the metadata verbatim; this never rewraps text.
+    fn clap_help(&self) -> String {
+        let mut out = String::with_capacity(512);
+        for line in std::iter::once(self.about.as_ref())
+            .chain(self.description.as_ref().iter().map(AsRef::as_ref))
+            .filter(|line| !line.is_empty())
+        {
+            out.push_str(line);
+            out.push('\n');
+        }
+        self.push_clap_usage(&mut out);
+        self.push_clap_arguments(&mut out);
+        self.push_clap_options(&mut out);
+        out
+    }
+
+    /// `Usage:` with any continuation lines indented under the first.
+    fn push_clap_usage(&self, out: &mut String) {
+        let short_doc = self.short_doc.as_ref();
+        let usage = if short_doc.is_empty() {
+            self.usage()
+        } else {
+            short_doc.to_owned()
+        };
+        out.push('\n');
+        for (index, line) in usage.lines().enumerate() {
+            out.push_str(if index == 0 { "Usage: " } else { "       " });
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    /// `Arguments:` listing declared positionals and the rest slot.
+    fn push_clap_arguments(&self, out: &mut String) {
+        let entries = self.clap_argument_entries();
+        if entries.is_empty() {
+            return;
+        }
+        out.push_str("\nArguments:\n");
+        push_clap_entries(out, &entries);
+    }
+
+    /// One label and description per declared positional, rest slot last.
+    fn clap_argument_entries(&self) -> Vec<(String, &str)> {
+        let mut entries: Vec<(String, &str)> = self
+            .positionals
+            .as_ref()
+            .iter()
+            .map(|positional| {
+                let name = positional.name.as_ref();
+                let label = if positional.required {
+                    format!("<{name}>")
+                } else {
+                    format!("[{name}]")
+                };
+                (label, positional.desc.as_ref())
+            })
+            .collect();
+        if self.has_rest {
+            entries.push(("[args]...".to_owned(), ""));
+        }
+        entries
+    }
+
+    /// `Options:` aligned to the widest label, `--help` and `--version` last.
+    fn push_clap_options(&self, out: &mut String) {
+        let mut entries: Vec<(String, &str)> = self
+            .flags()
+            .iter()
+            .filter(|flag| {
+                !matches!(flag.kind, FlagKind::Noop) && !flag.desc.as_ref().is_empty() && !flag.hidden
+            })
+            .map(|flag| (clap_flag_label(flag), flag.desc.as_ref()))
+            .collect();
+        let owns = |ch: char| self.flags().iter().any(|flag| flag.ch == ch);
+        entries.push((
+            if owns('h') { "    --help".to_owned() } else { "-h, --help".to_owned() },
+            "Print help",
+        ));
+        entries.push((
+            if owns('V') { "    --version".to_owned() } else { "-V, --version".to_owned() },
+            "Print version",
+        ));
+        out.push_str("\nOptions:\n");
+        push_clap_entries(out, &entries);
     }
 
     /// GNU coreutils-style help: `Usage:` line, about, then `-c, --long` options.
@@ -337,6 +430,7 @@ impl CommandDef<Static> {
             about: self.about.to_owned(),
             short_doc: self.short_doc.to_owned(),
             style: self.style,
+            help_style: self.help_style,
             on_unknown: self.on_unknown,
             permute: self.permute,
             flags: self
@@ -468,12 +562,71 @@ const fn is_synthetic(ch: char) -> bool {
     ch >= '\u{E000}'
 }
 
+/// `-c, --long <VAL>`, with the short column blank for long-only flags.
+fn clap_flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
+    let mut label = String::with_capacity(24);
+    if is_synthetic(flag.ch) {
+        label.push_str("    ");
+    } else {
+        label.push('-');
+        label.push(flag.ch);
+        if flag.long.as_ref().is_empty() {
+            return label;
+        }
+        label.push_str(", ");
+    }
+    label.push_str("--");
+    label.push_str(flag.long.as_ref());
+    let value_name = flag.value_name.as_ref();
+    if !value_name.is_empty() {
+        label.push_str(" <");
+        label.push_str(value_name);
+        label.push('>');
+    }
+    label
+}
+
+/// Two-space margin, labels padded to the widest, two-space gutter, description.
+fn push_clap_entries(out: &mut String, entries: &[(String, &str)]) {
+    let width = entries
+        .iter()
+        .map(|(label, _)| label.len())
+        .max()
+        .unwrap_or(0);
+    for (label, desc) in entries {
+        for (index, line) in clap_description_lines(desc).enumerate() {
+            if index == 0 {
+                out.push_str("  ");
+                out.push_str(label);
+                for _ in label.len()..width {
+                    out.push(' ');
+                }
+                out.push_str("  ");
+            } else {
+                for _ in 0..width + 4 {
+                    out.push(' ');
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+}
+
+/// A description renders one line even when it is empty, so the label still pads.
+fn clap_description_lines(desc: &str) -> impl Iterator<Item = &str> {
+    desc.is_empty()
+        .then_some("")
+        .into_iter()
+        .chain(desc.lines())
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests verify known structure")]
 mod tests {
     use super::{CommandDef, OwnedCommandDef, PositionalDef};
     use crate::parse::{FlagDef, FlagKind, OnUnknown};
-    use crate::style::Style;
+    use crate::style::{HelpStyle, Style};
 
     fn make_def(
         name: &'static str,
@@ -489,6 +642,7 @@ mod tests {
             about,
             short_doc,
             style: Style::Posix,
+            help_style: HelpStyle::from_parse_style(Style::Posix),
             on_unknown: OnUnknown::Reject,
             permute: false,
             flags,
@@ -814,6 +968,7 @@ mod tests {
             about: "",
             short_doc: "",
             style: Style::Posix,
+            help_style: HelpStyle::from_parse_style(Style::Posix),
             on_unknown: OnUnknown::Reject,
             permute: false,
             flags: &[],
@@ -919,6 +1074,7 @@ mod tests {
             about: "sample",
             short_doc: "sample [OPTION]...",
             style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
             on_unknown: OnUnknown::Reject,
             permute: true,
             flags,
@@ -938,6 +1094,7 @@ mod tests {
             about: "Print NAME with any leading directory components removed",
             short_doc: "basename [-z] NAME [SUFFIX]",
             style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
             on_unknown: OnUnknown::Reject,
             permute: true,
             flags: &GNU_FLAGS,
@@ -968,6 +1125,7 @@ mod tests {
             about: "do nothing, successfully",
             short_doc: "true",
             style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
             on_unknown: OnUnknown::Reject,
             permute: true,
             flags: &[],
@@ -1016,4 +1174,80 @@ mod tests {
         assert!(help.starts_with("exit: exit [n]\n"));
         assert!(!help.contains("Usage:"));
     }
+    // Reproduces the pinned `wc --help` layout from the reference build
+    #[test]
+    fn clap_help_matches_the_reference_layout() {
+        static FLAGS: &[FlagDef] = &[
+            FlagDef {
+                ch: 'c',
+                long: "bytes",
+                aliases: &[],
+                kind: FlagKind::Bool,
+                clears: &[],
+                desc: "print the byte counts",
+                value_name: "",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+            },
+            FlagDef {
+                ch: '\u{e000}',
+                long: "files0-from",
+                aliases: &[],
+                kind: FlagKind::Value,
+                clears: &[],
+                desc: "read input from the files specified by\nNUL-terminated names in file F",
+                value_name: "F",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+            },
+        ];
+        let def: CommandDef = CommandDef {
+            name: "wc",
+            about: "Print newline, word, and byte counts for each FILE.",
+            short_doc: "wc [OPTION]... [FILE]...",
+            style: Style::Gnu,
+            help_style: HelpStyle::Clap,
+            on_unknown: OnUnknown::Reject,
+            permute: true,
+            flags: FLAGS,
+            positionals: &[],
+            has_rest: true,
+            tags: &[],
+            description: &[],
+            extra: &[],
+            exit_status: &[],
+        };
+
+        let expected = "\
+Print newline, word, and byte counts for each FILE.
+
+Usage: wc [OPTION]... [FILE]...
+
+Arguments:
+  [args]...  
+
+Options:
+  -c, --bytes            print the byte counts
+      --files0-from <F>  read input from the files specified by
+                         NUL-terminated names in file F
+  -h, --help             Print help
+  -V, --version          Print version
+";
+        assert_eq!(def.help(), expected);
+    }
+
+    #[test]
+    fn clap_help_indents_every_usage_continuation() {
+        let def = CommandDef {
+            short_doc: "unlink FILE\nunlink OPTION",
+            help_style: HelpStyle::Clap,
+            ..gnu_definition(&[])
+        };
+        assert!(def.help().contains("Usage: unlink FILE\n       unlink OPTION\n"));
+    }
+
 }
