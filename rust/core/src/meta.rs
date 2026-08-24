@@ -251,7 +251,9 @@ where
         };
         push_line(&mut out, "", &format!("{}: {sd}", self.name()));
 
-        push_line(&mut out, INDENT, self.about.as_ref());
+        for line in self.about.as_ref().lines() {
+            push_line(&mut out, INDENT, line);
+        }
 
         if !self.description.as_ref().is_empty() {
             push_empty(&mut out);
@@ -413,8 +415,8 @@ where
         out.push_str("Usage: ");
         out.push_str(&usage);
         out.push('\n');
-        if !self.about.as_ref().is_empty() {
-            out.push_str(self.about.as_ref());
+        for line in self.about.as_ref().lines() {
+            out.push_str(line);
             out.push('\n');
         }
         for line in self.description.as_ref() {

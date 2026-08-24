@@ -297,7 +297,7 @@ fn parse_sections(lines: &[String]) -> DocSections {
                 } else if about.is_empty() {
                     trimmed.clone_into(&mut about);
                 } else {
-                    about.push(' ');
+                    about.push('\n');
                     about.push_str(trimmed);
                 }
             }
