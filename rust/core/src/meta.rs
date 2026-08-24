@@ -246,7 +246,7 @@ where
     pub fn help(&self) -> String {
         match self.help_style {
             HelpStyle::Gnu => return self.gnu_help(),
-            HelpStyle::Clap => return self.clap_help(),
+            HelpStyle::Clap | HelpStyle::ClapWide => return self.clap_help(),
             HelpStyle::Bash => {}
         }
         let mut out = String::with_capacity(512);
@@ -356,7 +356,11 @@ where
             return;
         }
         out.push_str("\nArguments:\n");
-        push_clap_entries(out, &entries);
+        if self.help_style == HelpStyle::ClapWide && self.spaced_help() {
+            push_wide_entries(out, &entries, false);
+        } else {
+            push_clap_entries(out, &entries);
+        }
     }
 
     /// One label and description per visible positional, rest slot last.
@@ -406,6 +410,13 @@ where
         }
     }
 
+    /// Whether help separates its entries with blank lines.
+    fn spaced_help(&self) -> bool {
+        self.tags()
+            .iter()
+            .any(|(name, _)| name.as_ref() == "help_spaced")
+    }
+
     /// `Options:` aligned to the widest label, `--help` and `--version` last.
     fn push_clap_options(&self, out: &mut String) {
         let mut entries: Vec<(String, String)> = self
@@ -413,8 +424,10 @@ where
             .iter()
             .filter(|flag| {
                 !matches!(flag.kind, FlagKind::Noop)
-                    && !flag.desc.as_ref().is_empty()
                     && !flag.hidden
+                    && (self.help_style == HelpStyle::ClapWide
+                        || !flag.desc.as_ref().is_empty()
+                        || !flag.help_values.as_ref().is_empty())
             })
             .map(|flag| (clap_flag_label(flag), clap_flag_desc(flag)))
             .collect();
@@ -449,6 +462,14 @@ where
         {
             let help = entries.remove(entries.len() - 2);
             entries.insert(0, help);
+            if self
+                .tags()
+                .iter()
+                .any(|(name, _)| name.as_ref() == "version_first")
+            {
+                let version = entries.pop().unwrap_or_default();
+                entries.insert(1, version);
+            }
         } else if let Some(long) = self
             .tags()
             .iter()
@@ -465,7 +486,11 @@ where
             }
         }
         out.push_str("\nOptions:\n");
-        push_clap_entries(out, &entries);
+        if self.help_style == HelpStyle::ClapWide {
+            push_wide_entries(out, &entries, self.spaced_help());
+        } else {
+            push_clap_entries(out, &entries);
+        }
     }
 
     /// GNU coreutils-style help: `Usage:` line, about, then `-c, --long` options.
@@ -703,16 +728,13 @@ fn clap_flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
 /// A flag's description with clap's trailing alias, default, and value notes.
 fn clap_flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
     let mut desc = flag.desc.as_ref().to_owned();
+    let empty = desc.is_empty();
     let default = flag.default_value.as_ref();
     if !default.is_empty() {
         desc.push_str(&format!(" [default: {default}]"));
     }
-    let listed = flag.help_values.as_ref();
-    let values = if listed.is_empty() {
-        flag.possible_values.as_ref()
-    } else {
-        listed
-    };
+    // help lists only what the author asked it to; the accepted set is a parsing fact
+    let values = flag.help_values.as_ref();
     if !values.is_empty() {
         let joined = values
             .iter()
@@ -741,6 +763,9 @@ fn clap_flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
             "aliases"
         };
         desc.push_str(&format!(" [{label}: {joined}]"));
+    }
+    if empty {
+        desc = desc.trim_start().to_owned();
     }
     desc
 }
@@ -780,6 +805,38 @@ fn push_clap_entries(out: &mut String, entries: &[(String, String)]) {
                 }
             }
             out.push_str(line);
+            out.push('\n');
+        }
+    }
+}
+
+/// The column a next-line description starts at.
+const CLAP_WIDE_INDENT: usize = 10;
+
+/// Each label on its own line, its description on the lines below it.
+fn push_wide_entries(out: &mut String, entries: &[(String, String)], spaced: bool) {
+    let room = CLAP_TERM_WIDTH.saturating_sub(CLAP_WIDE_INDENT).max(1);
+    for (index, (label, desc)) in entries.iter().enumerate() {
+        if spaced && index > 0 {
+            out.push('\n');
+        }
+        out.push_str("  ");
+        out.push_str(label);
+        out.push('\n');
+        if desc.is_empty() {
+            for _ in 0..CLAP_WIDE_INDENT {
+                out.push(' ');
+            }
+            out.push('\n');
+            continue;
+        }
+        for line in clap_wrap(desc, room) {
+            if !line.is_empty() {
+                for _ in 0..CLAP_WIDE_INDENT {
+                    out.push(' ');
+                }
+                out.push_str(&line);
+            }
             out.push('\n');
         }
     }
@@ -1617,7 +1674,7 @@ Options:
                 repeatable: false,
                 allow_hyphen_values: true,
                 possible_values: &["always", "auto", "never"],
-                help_values: &[],
+                help_values: &["always", "auto", "never"],
                 default_value: "auto",
                 help_label: "",
                 visible_aliases: &[],

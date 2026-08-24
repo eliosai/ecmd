@@ -35,6 +35,8 @@ pub enum HelpStyle {
     Gnu,
     /// `Usage:`, `Arguments:`, and a column-aligned `Options:`, as clap prints.
     Clap,
+    /// Like [`Self::Clap`], with each description on the line below its label.
+    ClapWide,
 }
 
 impl HelpStyle {
