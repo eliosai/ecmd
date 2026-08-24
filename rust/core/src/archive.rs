@@ -50,6 +50,9 @@ pub struct PositionalDefDef {
     name: String,
     required: bool,
     desc: String,
+    label: String,
+    default_value: String,
+    hidden: bool,
 }
 
 impl From<PositionalDefDef> for PositionalDef<Owned> {
@@ -58,6 +61,9 @@ impl From<PositionalDefDef> for PositionalDef<Owned> {
             name: value.name,
             required: value.required,
             desc: value.desc,
+            label: value.label,
+            default_value: value.default_value,
+            hidden: value.hidden,
         }
     }
 }
@@ -78,6 +84,8 @@ pub struct CommandDefDef {
     #[rkyv(with = Map<PositionalDefDef>)]
     positionals: Vec<PositionalDef<Owned>>,
     has_rest: bool,
+    rest_label: String,
+    rest_hidden: bool,
     tags: Vec<(String, String)>,
     description: Vec<String>,
     extra: Vec<String>,
@@ -97,6 +105,8 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             flags: value.flags,
             positionals: value.positionals,
             has_rest: value.has_rest,
+            rest_label: value.rest_label,
+            rest_hidden: value.rest_hidden,
             tags: value.tags,
             description: value.description,
             extra: value.extra,

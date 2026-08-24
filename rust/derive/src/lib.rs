@@ -19,7 +19,7 @@ mod codegen;
 ///
 /// Fields without `#[flag]` are positionals (by order).
 /// Fields of type `Operands` consume all remaining args.
-#[proc_macro_derive(Command, attributes(command, flag))]
+#[proc_macro_derive(Command, attributes(command, flag, operand))]
 pub fn derive_command(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     codegen::expand(&input)

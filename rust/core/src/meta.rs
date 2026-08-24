@@ -100,6 +100,10 @@ pub struct CommandDef<S: Storage = Static> {
     pub positionals: S::List<PositionalDef<S>>,
     /// Whether a rest-args (`Operands`) field exists.
     pub has_rest: bool,
+    /// Label for the rest slot in help; `args` when empty.
+    pub rest_label: S::Text,
+    /// Whether the rest slot is omitted from generated help.
+    pub rest_hidden: bool,
     /// Generic key-value tags for downstream consumers.
     pub tags: S::List<(S::Text, S::Text)>,
     /// Body paragraphs between summary and Options.
@@ -126,6 +130,12 @@ pub struct PositionalDef<S: Storage = Static> {
     pub required: bool,
     /// Human-readable description (from doc comment).
     pub desc: S::Text,
+    /// Label shown in help; the field name when empty.
+    pub label: S::Text,
+    /// Value used when the argument is omitted; none when empty.
+    pub default_value: S::Text,
+    /// When true, omit from generated help.
+    pub hidden: bool,
 }
 
 const INDENT: &str = "    ";
@@ -328,46 +338,64 @@ where
         push_clap_entries(out, &entries);
     }
 
-    /// One label and description per declared positional, rest slot last.
-    fn clap_argument_entries(&self) -> Vec<(String, &str)> {
-        let mut entries: Vec<(String, &str)> = self
+    /// One label and description per visible positional, rest slot last.
+    fn clap_argument_entries(&self) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String)> = self
             .positionals
             .as_ref()
             .iter()
+            .filter(|positional| !positional.hidden)
             .map(|positional| {
-                let name = positional.name.as_ref();
-                let label = if positional.required {
-                    format!("<{name}>")
+                let label = positional.label.as_ref();
+                let label = if label.is_empty() {
+                    positional.name.as_ref()
                 } else {
-                    format!("[{name}]")
+                    label
                 };
-                (label, positional.desc.as_ref())
+                let label = if positional.required {
+                    format!("<{label}>")
+                } else {
+                    format!("[{label}]")
+                };
+                (label, clap_argument_desc(positional))
             })
             .collect();
-        if self.has_rest {
-            entries.push(("[args]...".to_owned(), ""));
+        if self.has_rest && !self.rest_hidden {
+            let label = self.rest_label.as_ref();
+            let label = if label.is_empty() { "args" } else { label };
+            entries.push((format!("[{label}]..."), String::new()));
         }
         entries
     }
 
     /// `Options:` aligned to the widest label, `--help` and `--version` last.
     fn push_clap_options(&self, out: &mut String) {
-        let mut entries: Vec<(String, &str)> = self
+        let mut entries: Vec<(String, String)> = self
             .flags()
             .iter()
             .filter(|flag| {
-                !matches!(flag.kind, FlagKind::Noop) && !flag.desc.as_ref().is_empty() && !flag.hidden
+                !matches!(flag.kind, FlagKind::Noop)
+                    && !flag.desc.as_ref().is_empty()
+                    && !flag.hidden
             })
-            .map(|flag| (clap_flag_label(flag), flag.desc.as_ref()))
+            .map(|flag| (clap_flag_label(flag), flag.desc.as_ref().to_owned()))
             .collect();
         let owns = |ch: char| self.flags().iter().any(|flag| flag.ch == ch);
         entries.push((
-            if owns('h') { "    --help".to_owned() } else { "-h, --help".to_owned() },
-            "Print help",
+            if owns('h') {
+                "    --help".to_owned()
+            } else {
+                "-h, --help".to_owned()
+            },
+            "Print help".to_owned(),
         ));
         entries.push((
-            if owns('V') { "    --version".to_owned() } else { "-V, --version".to_owned() },
-            "Print version",
+            if owns('V') {
+                "    --version".to_owned()
+            } else {
+                "-V, --version".to_owned()
+            },
+            "Print version".to_owned(),
         ));
         out.push_str("\nOptions:\n");
         push_clap_entries(out, &entries);
@@ -446,6 +474,8 @@ impl CommandDef<Static> {
                 .map(PositionalDef::into_owned)
                 .collect(),
             has_rest: self.has_rest,
+            rest_label: self.rest_label.to_owned(),
+            rest_hidden: self.rest_hidden,
             tags: self
                 .tags
                 .iter()
@@ -472,6 +502,9 @@ impl PositionalDef<Static> {
             name: self.name.to_owned(),
             required: self.required,
             desc: self.desc.to_owned(),
+            label: self.label.to_owned(),
+            default_value: self.default_value.to_owned(),
+            hidden: self.hidden,
         }
     }
 }
@@ -586,8 +619,19 @@ fn clap_flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
     label
 }
 
+/// A positional's description, with clap's trailing default note when it has one.
+fn clap_argument_desc<S: Storage>(positional: &PositionalDef<S>) -> String {
+    let desc = positional.desc.as_ref();
+    let default = positional.default_value.as_ref();
+    match (desc.is_empty(), default.is_empty()) {
+        (_, true) => desc.to_owned(),
+        (true, false) => format!("[default: {default}]"),
+        (false, false) => format!("{desc} [default: {default}]"),
+    }
+}
+
 /// Two-space margin, labels padded to the widest, two-space gutter, description.
-fn push_clap_entries(out: &mut String, entries: &[(String, &str)]) {
+fn push_clap_entries(out: &mut String, entries: &[(String, String)]) {
     let width = entries
         .iter()
         .map(|(label, _)| label.len())
@@ -648,6 +692,8 @@ mod tests {
             flags,
             positionals: &[],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
             tags: &[],
             description,
             extra,
@@ -976,8 +1022,13 @@ mod tests {
                 name: "target",
                 required: true,
                 desc: "",
+                label: "",
+                default_value: "",
+                hidden: false,
             }],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1080,6 +1131,8 @@ mod tests {
             flags,
             positionals: &[],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1100,6 +1153,8 @@ mod tests {
             flags: &GNU_FLAGS,
             positionals: &[],
             has_rest: true,
+            rest_label: "",
+            rest_hidden: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1131,6 +1186,8 @@ mod tests {
             flags: &[],
             positionals: &[],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1216,6 +1273,8 @@ mod tests {
             flags: FLAGS,
             positionals: &[],
             has_rest: true,
+            rest_label: "",
+            rest_hidden: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1248,6 +1307,47 @@ Options:
             ..gnu_definition(&[])
         };
         assert!(def.help().contains("Usage: unlink FILE\n       unlink OPTION\n"));
+    }
+
+    #[test]
+    fn clap_help_hides_an_operand_and_notes_a_default() {
+        static POSITIONALS: &[PositionalDef] = &[
+            PositionalDef {
+                name: "path",
+                required: true,
+                desc: "",
+                label: "",
+                default_value: "",
+                hidden: true,
+            },
+            PositionalDef {
+                name: "input",
+                required: false,
+                desc: "",
+                label: "",
+                default_value: "-",
+                hidden: false,
+            },
+        ];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            positionals: POSITIONALS,
+            ..gnu_definition(&[])
+        };
+        let help = def.help();
+        assert!(!help.contains("<path>"), "hidden operand was listed");
+        assert!(help.contains("  [input]  [default: -]\n"));
+    }
+
+    #[test]
+    fn clap_help_labels_the_rest_slot() {
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            has_rest: true,
+            rest_label: "files",
+            ..gnu_definition(&[])
+        };
+        assert!(def.help().contains("Arguments:\n  [files]...  \n"));
     }
 
 }

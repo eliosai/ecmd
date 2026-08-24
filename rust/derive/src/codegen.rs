@@ -7,7 +7,7 @@ use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, Ident};
 
 use crate::attrs::{
-    CommandAttrs, FlagAttrs, RepeatAttr, extract_doc_comment, extract_doc_sections,
+    CommandAttrs, FlagAttrs, OperandAttrs, RepeatAttr, extract_doc_comment, extract_doc_sections,
 };
 use crate::classify::{FieldRole, classify_field, field_ident};
 
@@ -19,6 +19,8 @@ struct ClassifiedField<'a> {
     desc: String,
     /// Identity char: the short flag, or a private-use codepoint for long-only.
     id: char,
+    /// Help presentation for a positional or rest field.
+    operand: OperandAttrs,
 }
 
 /// Main expansion entry point.
@@ -77,6 +79,7 @@ fn classify_all(
                 role,
                 desc,
                 id,
+                operand: OperandAttrs::from_field(f)?,
             })
         })
         .collect()
@@ -633,6 +636,15 @@ fn gen_meta(
     let flag_metas = gen_flag_metas(cmd, fields);
     let pos_metas = gen_positional_metas(fields);
     let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
+    let rest = fields
+        .iter()
+        .find(|cf| matches!(cf.role, FieldRole::Rest))
+        .map(|cf| (cf.operand.label.clone(), cf.operand.hidden, cf.ident.to_string()));
+    let rest_label = rest
+        .as_ref()
+        .map(|(label, _, name)| if label.is_empty() { name.clone() } else { label.clone() })
+        .unwrap_or_default();
+    let rest_hidden = rest.as_ref().is_some_and(|(_, hidden, _)| *hidden);
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
     let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
 
@@ -656,6 +668,8 @@ fn gen_meta(
             flags: &[#flag_metas],
             positionals: &[#pos_metas],
             has_rest: #has_rest,
+            rest_label: #rest_label,
+            rest_hidden: #rest_hidden,
             tags: &[#( (#tag_keys, #tag_vals) ),*],
             description: &[#( #desc_lines ),*],
             extra: &[#( #extra_lines ),*],
@@ -751,8 +765,11 @@ fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
             };
             let name = cf.ident.to_string();
             let desc = &cf.desc;
+            let label = &cf.operand.label;
+            let default_value = &cf.operand.default_value;
+            let hidden = cf.operand.hidden;
             Some(quote! {
-                ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc }
+                ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc, label: #label, default_value: #default_value, hidden: #hidden }
             })
         })
         .collect();
