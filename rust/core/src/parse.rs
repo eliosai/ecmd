@@ -947,7 +947,14 @@ fn exact_long_names<S: Storage>(flags: &[FlagDef<S>]) -> bool {
 fn long_names<S: Storage>(flag: &FlagDef<S>) -> impl Iterator<Item = &str> {
     core::iter::once(flag.long.as_ref())
         .chain(flag.aliases.as_ref().iter().map(AsRef::as_ref))
-        .chain(flag.visible_aliases.as_ref().iter().map(AsRef::as_ref))
+        .chain(
+            flag.visible_aliases
+                .as_ref()
+                .iter()
+                .map(AsRef::as_ref)
+                // a one-character alias names a short flag, so it is never a long option
+                .filter(|alias| alias.chars().count() > 1),
+        )
         .filter(|n| !n.is_empty())
 }
 
