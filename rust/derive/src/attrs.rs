@@ -116,6 +116,8 @@ pub struct FlagAttrs {
     pub allow_hyphen_values: bool,
     pub possible_values: Vec<String>,
     pub default_value: String,
+    pub help_label: String,
+    pub visible_aliases: Vec<String>,
 }
 
 /// Help presentation for a positional or rest field, from `#[operand(...)]`.
@@ -124,6 +126,8 @@ pub struct OperandAttrs {
     pub label: String,
     pub default_value: String,
     pub hidden: bool,
+    pub required: bool,
+    pub spread: bool,
 }
 
 impl OperandAttrs {
@@ -139,6 +143,10 @@ impl OperandAttrs {
                 attrs.default_value = parse_lit_str(&meta)?;
             } else if meta.path.is_ident("hide") {
                 attrs.hidden = true;
+            } else if meta.path.is_ident("required") {
+                attrs.required = true;
+            } else if meta.path.is_ident("spread") {
+                attrs.spread = true;
             } else {
                 return Err(meta.error("unknown operand attribute"));
             }
@@ -172,15 +180,22 @@ impl FlagAttrs {
         let mut allow_hyphen_values = true;
         let mut possible_values: Vec<String> = Vec::new();
         let mut default_value = String::new();
+        let mut help_label = String::new();
+        let mut visible_aliases: Vec<String> = Vec::new();
 
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("values") {
                 let content;
                 syn::parenthesized!(content in meta.input);
-                let items = content.parse_terminated(<syn::LitStr as syn::parse::Parse>::parse, Token![,])?;
+                let items = content
+                    .parse_terminated(<syn::LitStr as syn::parse::Parse>::parse, Token![,])?;
                 possible_values.extend(items.into_iter().map(|item| item.value()));
             } else if meta.path.is_ident("default") {
                 default_value = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("help_label") {
+                help_label = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("visible_alias") {
+                visible_aliases.push(parse_lit_str(&meta)?);
             } else if meta.path.is_ident("short") {
                 short = parse_lit_char(&meta)?;
             } else if meta.path.is_ident("clears") {
@@ -227,6 +242,8 @@ impl FlagAttrs {
             allow_hyphen_values,
             possible_values,
             default_value,
+            help_label,
+            visible_aliases,
         }))
     }
 }
@@ -318,21 +335,21 @@ fn parse_sections(lines: &[String]) -> DocSections {
                 description.push(if trimmed.is_empty() {
                     String::new()
                 } else {
-                    trimmed.to_owned()
+                    line.clone()
                 });
             }
             DocState::Extra => {
                 extra.push(if trimmed.is_empty() {
                     String::new()
                 } else {
-                    trimmed.to_owned()
+                    line.clone()
                 });
             }
             DocState::ExitStatus => {
                 exit_status.push(if trimmed.is_empty() {
                     String::new()
                 } else {
-                    trimmed.to_owned()
+                    line.clone()
                 });
             }
         }

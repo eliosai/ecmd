@@ -25,6 +25,8 @@ pub struct FlagDefDef {
     allow_hyphen_values: bool,
     possible_values: Vec<String>,
     default_value: String,
+    help_label: String,
+    visible_aliases: Vec<String>,
 }
 
 impl From<FlagDefDef> for FlagDef<Owned> {
@@ -43,6 +45,8 @@ impl From<FlagDefDef> for FlagDef<Owned> {
             allow_hyphen_values: value.allow_hyphen_values,
             possible_values: value.possible_values,
             default_value: value.default_value,
+            help_label: value.help_label,
+            visible_aliases: value.visible_aliases,
         }
     }
 }
@@ -57,6 +61,7 @@ pub struct PositionalDefDef {
     label: String,
     default_value: String,
     hidden: bool,
+    spread: bool,
 }
 
 impl From<PositionalDefDef> for PositionalDef<Owned> {
@@ -68,6 +73,7 @@ impl From<PositionalDefDef> for PositionalDef<Owned> {
             label: value.label,
             default_value: value.default_value,
             hidden: value.hidden,
+            spread: value.spread,
         }
     }
 }
@@ -90,6 +96,9 @@ pub struct CommandDefDef {
     has_rest: bool,
     rest_label: String,
     rest_hidden: bool,
+    rest_desc: String,
+    rest_default: String,
+    rest_required: bool,
     tags: Vec<(String, String)>,
     description: Vec<String>,
     extra: Vec<String>,
@@ -111,6 +120,9 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             has_rest: value.has_rest,
             rest_label: value.rest_label,
             rest_hidden: value.rest_hidden,
+            rest_desc: value.rest_desc,
+            rest_default: value.rest_default,
+            rest_required: value.rest_required,
             tags: value.tags,
             description: value.description,
             extra: value.extra,

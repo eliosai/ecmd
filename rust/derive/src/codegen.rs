@@ -223,7 +223,7 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
 
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true, possible_values: &[], default_value: "" }
+            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true, possible_values: &[], default_value: "", help_label: "", visible_aliases: &[] }
         });
     }
     append_exact_long_marker(cmd, &mut defs);
@@ -311,7 +311,7 @@ fn append_field_group_marker(
                 kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                 value_name: "", hidden: true, implemented: true,
                 repeatable: false, allow_hyphen_values: true,
-                possible_values: &[], default_value: ""
+                possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
             }
         });
     }
@@ -400,7 +400,7 @@ fn append_value_markers(
                     kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                     value_name: "", hidden: true, implemented: true,
                     repeatable: false, allow_hyphen_values: true,
-                    possible_values: &[], default_value: ""
+                    possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
                 }
             });
         }
@@ -425,7 +425,7 @@ fn append_equals_only_markers(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
                     kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                     value_name: "", hidden: true, implemented: true,
                     repeatable: false, allow_hyphen_values: true,
-                    possible_values: &[], default_value: ""
+                    possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
                 }
             });
         }
@@ -442,7 +442,7 @@ fn append_exact_long_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
             kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
             value_name: "", hidden: true, implemented: true,
             repeatable: false, allow_hyphen_values: true,
-            possible_values: &[], default_value: ""
+            possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
         }
     });
 }
@@ -457,7 +457,7 @@ fn append_no_implicit_version_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStr
             kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
             value_name: "", hidden: true, implemented: true,
             repeatable: false, allow_hyphen_values: true,
-            possible_values: &[], default_value: ""
+            possible_values: &[], default_value: "", help_label: "", visible_aliases: &[]
         }
     });
 }
@@ -644,12 +644,36 @@ fn gen_meta(
     let rest = fields
         .iter()
         .find(|cf| matches!(cf.role, FieldRole::Rest))
-        .map(|cf| (cf.operand.label.clone(), cf.operand.hidden, cf.ident.to_string()));
+        .map(|cf| {
+            (
+                cf.operand.label.clone(),
+                cf.operand.hidden,
+                cf.ident.to_string(),
+                cf.desc.clone(),
+                cf.operand.default_value.clone(),
+                cf.operand.required,
+            )
+        });
     let rest_label = rest
         .as_ref()
-        .map(|(label, _, name)| if label.is_empty() { name.clone() } else { label.clone() })
+        .map(|(label, _, name, ..)| {
+            if label.is_empty() {
+                name.clone()
+            } else {
+                label.clone()
+            }
+        })
         .unwrap_or_default();
-    let rest_hidden = rest.as_ref().is_some_and(|(_, hidden, _)| *hidden);
+    let rest_hidden = rest.as_ref().is_some_and(|(_, hidden, ..)| *hidden);
+    let rest_desc = rest
+        .as_ref()
+        .map(|(_, _, _, desc, ..)| desc.clone())
+        .unwrap_or_default();
+    let rest_default = rest
+        .as_ref()
+        .map(|(_, _, _, _, default, _)| default.clone())
+        .unwrap_or_default();
+    let rest_required = rest.as_ref().is_some_and(|(.., required)| *required);
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
     let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
 
@@ -675,6 +699,9 @@ fn gen_meta(
             has_rest: #has_rest,
             rest_label: #rest_label,
             rest_hidden: #rest_hidden,
+            rest_desc: #rest_desc,
+            rest_default: #rest_default,
+            rest_required: #rest_required,
             tags: &[#( (#tag_keys, #tag_vals) ),*],
             description: &[#( #desc_lines ),*],
             extra: &[#( #extra_lines ),*],
@@ -713,8 +740,14 @@ fn flag_def_literal(
     let default_value = flag_attrs(&cf.role)
         .map(|attrs| attrs.default_value.clone())
         .unwrap_or_default();
+    let help_label = flag_attrs(&cf.role)
+        .map(|attrs| attrs.help_label.clone())
+        .unwrap_or_default();
+    let visible_aliases: Vec<String> = flag_attrs(&cf.role)
+        .map(|attrs| attrs.visible_aliases.clone())
+        .unwrap_or_default();
     Some(quote! {
-        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values, possible_values: &[#(#possible_values),*], default_value: #default_value }
+        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values, possible_values: &[#(#possible_values),*], default_value: #default_value, help_label: #help_label, visible_aliases: &[#(#visible_aliases),*] }
     })
 }
 
@@ -761,7 +794,7 @@ fn help_style_tokens(cmd: &CommandAttrs) -> TokenStream {
         _ => {
             let style = style_tokens(cmd);
             quote! { ::ecmd::style::HelpStyle::from_parse_style(#style) }
-        },
+        }
     }
 }
 
@@ -779,8 +812,9 @@ fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
             let label = &cf.operand.label;
             let default_value = &cf.operand.default_value;
             let hidden = cf.operand.hidden;
+            let spread = cf.operand.spread;
             Some(quote! {
-                ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc, label: #label, default_value: #default_value, hidden: #hidden }
+                ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc, label: #label, default_value: #default_value, hidden: #hidden, spread: #spread }
             })
         })
         .collect();

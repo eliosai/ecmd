@@ -79,6 +79,10 @@ pub struct FlagDef<S: Storage = Static> {
     pub possible_values: S::List<S::Text>,
     /// The value used when the flag is absent; none when empty.
     pub default_value: S::Text,
+    /// Replaces the generated label in help; generated when empty.
+    pub help_label: S::Text,
+    /// Aliases help lists; parsing accepts these as well as `aliases`.
+    pub visible_aliases: S::List<S::Text>,
 }
 
 impl FlagDef<Static> {
@@ -105,6 +109,12 @@ impl FlagDef<Static> {
                 .map(|value| (*value).to_owned())
                 .collect(),
             default_value: self.default_value.to_owned(),
+            help_label: self.help_label.to_owned(),
+            visible_aliases: self
+                .visible_aliases
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
         }
     }
 }
@@ -930,6 +940,7 @@ fn exact_long_names<S: Storage>(flags: &[FlagDef<S>]) -> bool {
 fn long_names<S: Storage>(flag: &FlagDef<S>) -> impl Iterator<Item = &str> {
     core::iter::once(flag.long.as_ref())
         .chain(flag.aliases.as_ref().iter().map(AsRef::as_ref))
+        .chain(flag.visible_aliases.as_ref().iter().map(AsRef::as_ref))
         .filter(|n| !n.is_empty())
 }
 
@@ -988,6 +999,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1006,6 +1019,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1024,6 +1039,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1042,6 +1059,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1060,6 +1079,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1417,6 +1438,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["-o", "errexit"],
@@ -1449,6 +1472,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["+o", "verbose"],
@@ -1481,6 +1506,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["-oerrexit"],
@@ -1514,6 +1541,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1532,6 +1561,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1791,6 +1822,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1835,6 +1868,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["--presume-input-pipe"],

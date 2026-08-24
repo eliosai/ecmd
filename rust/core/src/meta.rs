@@ -104,6 +104,12 @@ pub struct CommandDef<S: Storage = Static> {
     pub rest_label: S::Text,
     /// Whether the rest slot is omitted from generated help.
     pub rest_hidden: bool,
+    /// Description shown for the rest slot.
+    pub rest_desc: S::Text,
+    /// Value the rest slot reports when it is empty; none when empty.
+    pub rest_default: S::Text,
+    /// Whether the rest slot shows as required.
+    pub rest_required: bool,
     /// Generic key-value tags for downstream consumers.
     pub tags: S::List<(S::Text, S::Text)>,
     /// Body paragraphs between summary and Options.
@@ -136,6 +142,8 @@ pub struct PositionalDef<S: Storage = Static> {
     pub default_value: S::Text,
     /// When true, omit from generated help.
     pub hidden: bool,
+    /// Whether help shows the label as accepting more than one value.
+    pub spread: bool,
 }
 
 const INDENT: &str = "    ";
@@ -239,7 +247,7 @@ where
         match self.help_style {
             HelpStyle::Gnu => return self.gnu_help(),
             HelpStyle::Clap => return self.clap_help(),
-            HelpStyle::Bash => {},
+            HelpStyle::Bash => {}
         }
         let mut out = String::with_capacity(512);
 
@@ -301,16 +309,27 @@ where
     /// Line breaks come from the metadata verbatim; this never rewraps text.
     fn clap_help(&self) -> String {
         let mut out = String::with_capacity(512);
-        for line in std::iter::once(self.about.as_ref())
-            .chain(self.description.as_ref().iter().map(AsRef::as_ref))
-            .filter(|line| !line.is_empty())
-        {
+        for line in self.about.as_ref().lines() {
             out.push_str(line);
+            out.push('\n');
+        }
+        if !self.description.as_ref().is_empty() {
+            out.push('\n');
+        }
+        for line in self.description.as_ref() {
+            out.push_str(line.as_ref());
             out.push('\n');
         }
         self.push_clap_usage(&mut out);
         self.push_clap_arguments(&mut out);
         self.push_clap_options(&mut out);
+        if !self.extra.as_ref().is_empty() {
+            out.push('\n');
+            for line in self.extra.as_ref() {
+                out.push_str(line.as_ref());
+                out.push('\n');
+            }
+        }
         out
     }
 
@@ -354,10 +373,11 @@ where
                 } else {
                     label
                 };
+                let tail = if positional.spread { "..." } else { "" };
                 let label = if positional.required {
-                    format!("<{label}>")
+                    format!("<{label}>{tail}")
                 } else {
-                    format!("[{label}]")
+                    format!("[{label}]{tail}")
                 };
                 (label, clap_argument_desc(positional))
             })
@@ -365,9 +385,25 @@ where
         if self.has_rest && !self.rest_hidden {
             let label = self.rest_label.as_ref();
             let label = if label.is_empty() { "args" } else { label };
-            entries.push((format!("[{label}]..."), String::new()));
+            let label = if self.rest_required {
+                format!("<{label}>...")
+            } else {
+                format!("[{label}]...")
+            };
+            entries.push((label, self.rest_desc().to_owned()));
         }
         entries
+    }
+
+    /// The rest slot's description, with clap's trailing default note.
+    fn rest_desc(&self) -> String {
+        let desc = self.rest_desc.as_ref();
+        let default = self.rest_default.as_ref();
+        match (desc.is_empty(), default.is_empty()) {
+            (_, true) => desc.to_owned(),
+            (true, false) => format!("[default: {default}]"),
+            (false, false) => format!("{desc} [default: {default}]"),
+        }
     }
 
     /// `Options:` aligned to the widest label, `--help` and `--version` last.
@@ -383,13 +419,20 @@ where
             .map(|flag| (clap_flag_label(flag), clap_flag_desc(flag)))
             .collect();
         let owns = |ch: char| self.flags().iter().any(|flag| flag.ch == ch);
+        let wording = |key: &str, fallback: &str| {
+            self.tags()
+                .iter()
+                .find_map(|(name, value)| (name.as_ref() == key).then(|| value.as_ref()))
+                .unwrap_or(fallback)
+                .to_owned()
+        };
         entries.push((
             if owns('h') {
                 "    --help".to_owned()
             } else {
                 "-h, --help".to_owned()
             },
-            "Print help".to_owned(),
+            wording("help_desc", "Print help"),
         ));
         entries.push((
             if owns('V') {
@@ -397,8 +440,16 @@ where
             } else {
                 "-V, --version".to_owned()
             },
-            "Print version".to_owned(),
+            wording("version_desc", "Print version"),
         ));
+        if self
+            .tags()
+            .iter()
+            .any(|(name, _)| name.as_ref() == "help_first")
+        {
+            let help = entries.remove(entries.len() - 2);
+            entries.insert(0, help);
+        }
         out.push_str("\nOptions:\n");
         push_clap_entries(out, &entries);
     }
@@ -478,6 +529,9 @@ impl CommandDef<Static> {
             has_rest: self.has_rest,
             rest_label: self.rest_label.to_owned(),
             rest_hidden: self.rest_hidden,
+            rest_desc: self.rest_desc.to_owned(),
+            rest_default: self.rest_default.to_owned(),
+            rest_required: self.rest_required,
             tags: self
                 .tags
                 .iter()
@@ -507,6 +561,7 @@ impl PositionalDef<Static> {
             label: self.label.to_owned(),
             default_value: self.default_value.to_owned(),
             hidden: self.hidden,
+            spread: self.spread,
         }
     }
 }
@@ -599,6 +654,10 @@ const fn is_synthetic(ch: char) -> bool {
 
 /// `-c, --long <VAL>`, with the short column blank for long-only flags.
 fn clap_flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
+    let override_label = flag.help_label.as_ref();
+    if !override_label.is_empty() {
+        return override_label.to_owned();
+    }
     let mut label = String::with_capacity(24);
     if is_synthetic(flag.ch) {
         label.push_str("    ");
@@ -637,14 +696,25 @@ fn clap_flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
             .join(", ");
         desc.push_str(&format!(" [possible values: {joined}]"));
     }
-    let aliases = flag.aliases.as_ref();
+    let aliases = flag.visible_aliases.as_ref();
     if !aliases.is_empty() {
         let joined = aliases
             .iter()
-            .map(|alias| format!("--{}", alias.as_ref()))
+            .map(|alias| {
+                let alias = alias.as_ref();
+                if alias.chars().count() == 1 {
+                    format!("-{alias}")
+                } else {
+                    format!("--{alias}")
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
-        let label = if aliases.len() == 1 { "alias" } else { "aliases" };
+        let label = if aliases.len() == 1 {
+            "alias"
+        } else {
+            "aliases"
+        };
         desc.push_str(&format!(" [{label}: {joined}]"));
     }
     desc
@@ -668,8 +738,10 @@ fn push_clap_entries(out: &mut String, entries: &[(String, String)]) {
         .map(|(label, _)| label.len())
         .max()
         .unwrap_or(0);
+    let room = CLAP_TERM_WIDTH.saturating_sub(width + 4).max(1);
     for (label, desc) in entries {
-        for (index, line) in clap_description_lines(desc).enumerate() {
+        let wrapped = clap_wrap(desc, room);
+        for (index, line) in wrapped.iter().enumerate() {
             if index == 0 {
                 out.push_str("  ");
                 out.push_str(label);
@@ -688,12 +760,39 @@ fn push_clap_entries(out: &mut String, entries: &[(String, String)]) {
     }
 }
 
-/// A description renders one line even when it is empty, so the label still pads.
-fn clap_description_lines(desc: &str) -> impl Iterator<Item = &str> {
-    desc.is_empty()
-        .then_some("")
-        .into_iter()
-        .chain(desc.lines())
+/// The column clap wraps option descriptions at.
+const CLAP_TERM_WIDTH: usize = 100;
+
+/// Each authored line wrapped to `room` columns, never fewer than one line out.
+fn clap_wrap(desc: &str, room: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for paragraph in desc.lines() {
+        let mut line = String::new();
+        let mut gap = String::new();
+        for token in paragraph.split(' ') {
+            if token.is_empty() {
+                gap.push(' ');
+                continue;
+            }
+            let separator = if line.is_empty() {
+                String::new()
+            } else {
+                format!("{gap} ")
+            };
+            if !line.is_empty() && line.len() + separator.len() + token.len() > room {
+                out.push(std::mem::take(&mut line));
+            } else {
+                line.push_str(&separator);
+            }
+            line.push_str(token);
+            gap.clear();
+        }
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -725,6 +824,9 @@ mod tests {
             has_rest: false,
             rest_label: "",
             rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             tags: &[],
             description,
             extra,
@@ -748,6 +850,8 @@ mod tests {
         allow_hyphen_values: true,
         possible_values: &[],
         default_value: "",
+        help_label: "",
+        visible_aliases: &[],
     }];
 
     #[test]
@@ -900,6 +1004,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
             desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
         },
         FlagDef {
@@ -915,6 +1021,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
             desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
         },
         FlagDef {
@@ -930,6 +1038,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
             desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
         },
     ];
@@ -1064,10 +1174,14 @@ mod tests {
                 label: "",
                 default_value: "",
                 hidden: false,
+                spread: false,
             }],
             has_rest: false,
             rest_label: "",
             rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1115,6 +1229,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
         FlagDef {
             ch: 's',
@@ -1130,6 +1246,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
     ];
 
@@ -1148,6 +1266,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
         FlagDef {
             ch: 'V',
@@ -1163,6 +1283,8 @@ mod tests {
             allow_hyphen_values: true,
             possible_values: &[],
             default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
     ];
 
@@ -1180,6 +1302,9 @@ mod tests {
             has_rest: false,
             rest_label: "",
             rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1202,6 +1327,9 @@ mod tests {
             has_rest: true,
             rest_label: "",
             rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1235,6 +1363,9 @@ mod tests {
             has_rest: false,
             rest_label: "",
             rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1296,6 +1427,8 @@ mod tests {
                 allow_hyphen_values: true,
                 possible_values: &[],
                 default_value: "",
+                help_label: "",
+                visible_aliases: &[],
             },
             FlagDef {
                 ch: '\u{e000}',
@@ -1311,6 +1444,8 @@ mod tests {
                 allow_hyphen_values: true,
                 possible_values: &[],
                 default_value: "",
+                help_label: "",
+                visible_aliases: &[],
             },
         ];
         let def: CommandDef = CommandDef {
@@ -1326,6 +1461,9 @@ mod tests {
             has_rest: true,
             rest_label: "",
             rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             tags: &[],
             description: &[],
             extra: &[],
@@ -1357,7 +1495,10 @@ Options:
             help_style: HelpStyle::Clap,
             ..gnu_definition(&[])
         };
-        assert!(def.help().contains("Usage: unlink FILE\n       unlink OPTION\n"));
+        assert!(
+            def.help()
+                .contains("Usage: unlink FILE\n       unlink OPTION\n")
+        );
     }
 
     #[test]
@@ -1370,6 +1511,7 @@ Options:
                 label: "",
                 default_value: "",
                 hidden: true,
+                spread: false,
             },
             PositionalDef {
                 name: "input",
@@ -1378,6 +1520,7 @@ Options:
                 label: "",
                 default_value: "-",
                 hidden: false,
+                spread: false,
             },
         ];
         let def = CommandDef {
@@ -1407,7 +1550,7 @@ Options:
             FlagDef {
                 ch: 'q',
                 long: "quiet",
-                aliases: &["silent"],
+                aliases: &[],
                 kind: FlagKind::Bool,
                 clears: &[],
                 desc: "never print headers giving file names",
@@ -1418,6 +1561,8 @@ Options:
                 allow_hyphen_values: true,
                 possible_values: &[],
                 default_value: "",
+                help_label: "",
+                visible_aliases: &["silent"],
             },
             FlagDef {
                 ch: 'c',
@@ -1433,6 +1578,8 @@ Options:
                 allow_hyphen_values: true,
                 possible_values: &["always", "auto", "never"],
                 default_value: "auto",
+                help_label: "",
+                visible_aliases: &[],
             },
         ];
         let def = CommandDef {
@@ -1446,5 +1593,4 @@ Options:
             "colorize the output [default: auto] [possible values: always, auto, never]\n"
         ));
     }
-
 }
