@@ -223,7 +223,7 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
 
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true }
+            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true, possible_values: &[], default_value: "" }
         });
     }
     append_exact_long_marker(cmd, &mut defs);
@@ -310,7 +310,8 @@ fn append_field_group_marker(
                 ch: '\0', long: #marker, aliases: &[],
                 kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                 value_name: "", hidden: true, implemented: true,
-                repeatable: false, allow_hyphen_values: true
+                repeatable: false, allow_hyphen_values: true,
+                possible_values: &[], default_value: ""
             }
         });
     }
@@ -398,7 +399,8 @@ fn append_value_markers(
                     ch: '\0', long: #marker, aliases: &[],
                     kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                     value_name: "", hidden: true, implemented: true,
-                    repeatable: false, allow_hyphen_values: true
+                    repeatable: false, allow_hyphen_values: true,
+                    possible_values: &[], default_value: ""
                 }
             });
         }
@@ -422,7 +424,8 @@ fn append_equals_only_markers(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
                     ch: '\0', long: #marker, aliases: &[],
                     kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
                     value_name: "", hidden: true, implemented: true,
-                    repeatable: false, allow_hyphen_values: true
+                    repeatable: false, allow_hyphen_values: true,
+                    possible_values: &[], default_value: ""
                 }
             });
         }
@@ -438,7 +441,8 @@ fn append_exact_long_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
             ch: '\0', long: "\0exact-long", aliases: &[],
             kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
             value_name: "", hidden: true, implemented: true,
-            repeatable: false, allow_hyphen_values: true
+            repeatable: false, allow_hyphen_values: true,
+            possible_values: &[], default_value: ""
         }
     });
 }
@@ -452,7 +456,8 @@ fn append_no_implicit_version_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStr
             ch: '\0', long: "\0no-implicit-version", aliases: &[],
             kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
             value_name: "", hidden: true, implemented: true,
-            repeatable: false, allow_hyphen_values: true
+            repeatable: false, allow_hyphen_values: true,
+            possible_values: &[], default_value: ""
         }
     });
 }
@@ -702,8 +707,14 @@ fn flag_def_literal(
         || !cmd.no_override
         || matches!(cf.role, FieldRole::RepeatableValueFlag(_));
     let allow_hyphen_values = flag_attrs(&cf.role).is_none_or(|attrs| attrs.allow_hyphen_values);
+    let possible_values: Vec<String> = flag_attrs(&cf.role)
+        .map(|attrs| attrs.possible_values.clone())
+        .unwrap_or_default();
+    let default_value = flag_attrs(&cf.role)
+        .map(|attrs| attrs.default_value.clone())
+        .unwrap_or_default();
     Some(quote! {
-        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values }
+        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values, possible_values: &[#(#possible_values),*], default_value: #default_value }
     })
 }
 

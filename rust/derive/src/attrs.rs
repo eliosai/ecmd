@@ -114,6 +114,8 @@ pub struct FlagAttrs {
     pub implemented: bool,
     pub repeat: RepeatAttr,
     pub allow_hyphen_values: bool,
+    pub possible_values: Vec<String>,
+    pub default_value: String,
 }
 
 /// Help presentation for a positional or rest field, from `#[operand(...)]`.
@@ -168,9 +170,18 @@ impl FlagAttrs {
         let mut implemented = true;
         let mut repeat = RepeatAttr::Default;
         let mut allow_hyphen_values = true;
+        let mut possible_values: Vec<String> = Vec::new();
+        let mut default_value = String::new();
 
         attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("short") {
+            if meta.path.is_ident("values") {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let items = content.parse_terminated(<syn::LitStr as syn::parse::Parse>::parse, Token![,])?;
+                possible_values.extend(items.into_iter().map(|item| item.value()));
+            } else if meta.path.is_ident("default") {
+                default_value = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("short") {
                 short = parse_lit_char(&meta)?;
             } else if meta.path.is_ident("clears") {
                 let content;
@@ -214,6 +225,8 @@ impl FlagAttrs {
             implemented,
             repeat,
             allow_hyphen_values,
+            possible_values,
+            default_value,
         }))
     }
 }

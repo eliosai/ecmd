@@ -75,6 +75,10 @@ pub struct FlagDef<S: Storage = Static> {
     pub repeatable: bool,
     /// Whether a separated value may begin with a hyphen.
     pub allow_hyphen_values: bool,
+    /// The accepted values, when the flag admits only a fixed set.
+    pub possible_values: S::List<S::Text>,
+    /// The value used when the flag is absent; none when empty.
+    pub default_value: S::Text,
 }
 
 impl FlagDef<Static> {
@@ -95,6 +99,12 @@ impl FlagDef<Static> {
             implemented: self.implemented,
             repeatable: self.repeatable,
             allow_hyphen_values: self.allow_hyphen_values,
+            possible_values: self
+                .possible_values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            default_value: self.default_value.to_owned(),
         }
     }
 }
@@ -976,6 +986,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -992,6 +1004,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -1008,6 +1022,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -1024,6 +1040,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -1040,6 +1058,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -1395,6 +1415,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }];
         let r = scan(
             &["-o", "errexit"],
@@ -1425,6 +1447,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }];
         let r = scan(
             &["+o", "verbose"],
@@ -1455,6 +1479,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }];
         let r = scan(
             &["-oerrexit"],
@@ -1486,6 +1512,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -1502,6 +1530,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -1759,6 +1789,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }
     }
 
@@ -1801,6 +1833,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         }];
         let r = scan(
             &["--presume-input-pipe"],

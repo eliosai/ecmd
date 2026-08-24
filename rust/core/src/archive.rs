@@ -23,6 +23,8 @@ pub struct FlagDefDef {
     implemented: bool,
     repeatable: bool,
     allow_hyphen_values: bool,
+    possible_values: Vec<String>,
+    default_value: String,
 }
 
 impl From<FlagDefDef> for FlagDef<Owned> {
@@ -39,6 +41,8 @@ impl From<FlagDefDef> for FlagDef<Owned> {
             implemented: value.implemented,
             repeatable: value.repeatable,
             allow_hyphen_values: value.allow_hyphen_values,
+            possible_values: value.possible_values,
+            default_value: value.default_value,
         }
     }
 }
@@ -146,6 +150,8 @@ mod tests {
                 implemented: false,
                 repeatable: false,
                 allow_hyphen_values: true,
+                possible_values: &[],
+                default_value: "",
             }],
             positionals: Vec::new(),
             has_rest: true,

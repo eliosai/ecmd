@@ -380,7 +380,7 @@ where
                     && !flag.desc.as_ref().is_empty()
                     && !flag.hidden
             })
-            .map(|flag| (clap_flag_label(flag), flag.desc.as_ref().to_owned()))
+            .map(|flag| (clap_flag_label(flag), clap_flag_desc(flag)))
             .collect();
         let owns = |ch: char| self.flags().iter().any(|flag| flag.ch == ch);
         entries.push((
@@ -621,6 +621,35 @@ fn clap_flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
     label
 }
 
+/// A flag's description with clap's trailing alias, default, and value notes.
+fn clap_flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
+    let mut desc = flag.desc.as_ref().to_owned();
+    let default = flag.default_value.as_ref();
+    if !default.is_empty() {
+        desc.push_str(&format!(" [default: {default}]"));
+    }
+    let values = flag.possible_values.as_ref();
+    if !values.is_empty() {
+        let joined = values
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>()
+            .join(", ");
+        desc.push_str(&format!(" [possible values: {joined}]"));
+    }
+    let aliases = flag.aliases.as_ref();
+    if !aliases.is_empty() {
+        let joined = aliases
+            .iter()
+            .map(|alias| format!("--{}", alias.as_ref()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let label = if aliases.len() == 1 { "alias" } else { "aliases" };
+        desc.push_str(&format!(" [{label}: {joined}]"));
+    }
+    desc
+}
+
 /// A positional's description, with clap's trailing default note when it has one.
 fn clap_argument_desc<S: Storage>(positional: &PositionalDef<S>) -> String {
     let desc = positional.desc.as_ref();
@@ -717,6 +746,8 @@ mod tests {
         implemented: true,
         repeatable: false,
         allow_hyphen_values: true,
+        possible_values: &[],
+        default_value: "",
     }];
 
     #[test]
@@ -867,6 +898,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
             desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
         },
         FlagDef {
@@ -880,6 +913,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
             desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
         },
         FlagDef {
@@ -893,6 +928,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
             desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
         },
     ];
@@ -1076,6 +1113,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         },
         FlagDef {
             ch: 's',
@@ -1089,6 +1128,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         },
     ];
 
@@ -1105,6 +1146,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         },
         FlagDef {
             ch: 'V',
@@ -1118,6 +1161,8 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            default_value: "",
         },
     ];
 
@@ -1249,6 +1294,8 @@ mod tests {
                 implemented: true,
                 repeatable: false,
                 allow_hyphen_values: true,
+                possible_values: &[],
+                default_value: "",
             },
             FlagDef {
                 ch: '\u{e000}',
@@ -1262,6 +1309,8 @@ mod tests {
                 implemented: true,
                 repeatable: false,
                 allow_hyphen_values: true,
+                possible_values: &[],
+                default_value: "",
             },
         ];
         let def: CommandDef = CommandDef {
@@ -1350,6 +1399,52 @@ Options:
             ..gnu_definition(&[])
         };
         assert!(def.help().contains("Arguments:\n  [files]...  \n"));
+    }
+
+    #[test]
+    fn clap_help_notes_defaults_possible_values_and_aliases() {
+        static FLAGS: &[FlagDef] = &[
+            FlagDef {
+                ch: 'q',
+                long: "quiet",
+                aliases: &["silent"],
+                kind: FlagKind::Bool,
+                clears: &[],
+                desc: "never print headers giving file names",
+                value_name: "",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+                possible_values: &[],
+                default_value: "",
+            },
+            FlagDef {
+                ch: 'c',
+                long: "color",
+                aliases: &[],
+                kind: FlagKind::Value,
+                clears: &[],
+                desc: "colorize the output",
+                value_name: "WHEN",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+                possible_values: &["always", "auto", "never"],
+                default_value: "auto",
+            },
+        ];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            flags: FLAGS,
+            ..gnu_definition(&[])
+        };
+        let help = def.help();
+        assert!(help.contains("never print headers giving file names [alias: --silent]\n"));
+        assert!(help.contains(
+            "colorize the output [default: auto] [possible values: always, auto, never]\n"
+        ));
     }
 
 }
