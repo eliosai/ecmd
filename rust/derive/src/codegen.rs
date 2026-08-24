@@ -795,6 +795,7 @@ fn help_style_tokens(cmd: &CommandAttrs) -> TokenStream {
         Some("gnu") => quote! { ::ecmd::style::HelpStyle::Gnu },
         Some("clap") => quote! { ::ecmd::style::HelpStyle::Clap },
         Some("clap_wide") => quote! { ::ecmd::style::HelpStyle::ClapWide },
+        Some("util_linux") => quote! { ::ecmd::style::HelpStyle::UtilLinux },
         _ => {
             let style = style_tokens(cmd);
             quote! { ::ecmd::style::HelpStyle::from_parse_style(#style) }

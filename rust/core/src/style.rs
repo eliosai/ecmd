@@ -37,6 +37,8 @@ pub enum HelpStyle {
     Clap,
     /// Like [`Self::Clap`], with each description on the line below its label.
     ClapWide,
+    /// A leading blank, `Usage:` alone, and a `(1)` trailer, as util-linux prints.
+    UtilLinux,
 }
 
 impl HelpStyle {
