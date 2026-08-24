@@ -629,12 +629,27 @@ where
 
     /// Every documented flag as util-linux labels and describes it.
     fn util_linux_entries(&self) -> Vec<(String, String)> {
-        self.flags()
+        let mut entries: Vec<(String, String)> = self
+            .flags()
             .iter()
             .filter(|flag| !flag.hidden && !flag.desc.as_ref().is_empty())
             .filter(|flag| !matches!(flag.long.as_ref(), "help" | "version"))
             .map(|flag| (util_linux_label(flag), flag.desc.as_ref().to_owned()))
-            .collect()
+            .collect();
+        for (name, value) in self.tags() {
+            if name.as_ref() != "help_row" {
+                continue;
+            }
+            let mut parts = value.as_ref().splitn(3, '\t');
+            let (Some(at), Some(label), Some(desc)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let at = at.parse().unwrap_or(entries.len()).min(entries.len());
+            entries.insert(at, (label.to_owned(), desc.to_owned()));
+        }
+        entries
     }
 
     fn gnu_help(&self) -> String {
@@ -1588,6 +1603,18 @@ mod tests {
             tags,
             ..CommandDef::EMPTY
         }
+    }
+
+    #[test]
+    fn util_linux_help_injects_a_literal_row_at_its_index() {
+        let help = util_linux_def(&[
+            ("help_width", "27"),
+            ("help_row", "0\t-<sig>\tsignal to send (either number or name)"),
+        ])
+        .help();
+        assert!(help.contains(
+            "Options:\n -<sig>                    signal to send (either number or name)\n -s, --single-shot"
+        ));
     }
 
     #[test]
