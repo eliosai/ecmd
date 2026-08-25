@@ -454,7 +454,24 @@ where
             };
             entries.push((label, self.rest_desc().to_owned()));
         }
+        self.insert_arg_rows(&mut entries);
         entries
+    }
+
+    /// Help-only positional rows from `arg_row` tags, each `INDEX\tLABEL\tDESC`.
+    fn insert_arg_rows(&self, entries: &mut Vec<(String, String)>) {
+        for (name, value) in self.tags() {
+            if name.as_ref() != "arg_row" {
+                continue;
+            }
+            let mut parts = value.as_ref().splitn(3, '\t');
+            let (Some(at), Some(label), Some(desc)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let at = at.parse().unwrap_or(entries.len()).min(entries.len());
+            entries.insert(at, (label.to_owned(), desc.to_owned()));
+        }
     }
 
     /// The rest slot's description, with clap's trailing default note.
@@ -1982,6 +1999,38 @@ Options:
             ..gnu_definition(&[])
         };
         assert!(def.help().contains("Arguments:\n  [files]...  \n"));
+    }
+
+    #[test]
+    fn clap_help_inserts_an_arg_row_before_the_rest_slot() {
+        const ARG_ROW_MODE: &[(&str, &str)] = &[("arg_row", "0\t[MODE]\t")];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            has_rest: true,
+            rest_label: "FILE",
+            tags: ARG_ROW_MODE,
+            ..gnu_definition(&[])
+        };
+        assert!(
+            def.help()
+                .contains("Arguments:\n  [MODE]     \n  [FILE]...  \n")
+        );
+    }
+
+    #[test]
+    fn clap_help_appends_an_arg_row_past_the_end_and_keeps_its_desc() {
+        const ARG_ROW_SIZE: &[(&str, &str)] = &[("arg_row", "9\t[SIZE]\tbytes to keep")];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            has_rest: true,
+            rest_label: "FILE",
+            tags: ARG_ROW_SIZE,
+            ..gnu_definition(&[])
+        };
+        assert!(
+            def.help()
+                .contains("Arguments:\n  [FILE]...  \n  [SIZE]     bytes to keep\n")
+        );
     }
 
     #[test]
