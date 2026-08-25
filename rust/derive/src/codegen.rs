@@ -346,13 +346,17 @@ struct PolicyTokens {
     values: TokenStream,
     numeric_operands: TokenStream,
     first_numeric: TokenStream,
+    exact_long: bool,
+    equals_only: TokenStream,
 }
 
 fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result<PolicyTokens> {
     let mut values = Vec::new();
     let mut numeric_operands = Vec::new();
     let mut first_numeric = None;
+    let mut equals_only = Vec::new();
     let mut seen_values = HashSet::new();
+    let exact_long = cmd.tags.iter().any(|(key, _)| key == "exact_long");
     for (key, value) in &cmd.tags {
         let mode = match key.as_str() {
             "optional_values" => Some(quote! { ::ecmd::policy::ValueMode::AttachedOrDefault }),
@@ -369,9 +373,31 @@ fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result
             append_numeric_operands(value, fields, &mut numeric_operands)?;
         } else if key == "first_numeric_value" {
             first_numeric = Some(policy_field(fields, value)?.id);
+        } else if key == "equals_only" {
+            append_flag_identities(value, fields, &mut equals_only)?;
         }
     }
-    Ok(policy_literal(&values, &numeric_operands, first_numeric))
+    Ok(policy_literal(
+        &values,
+        &numeric_operands,
+        first_numeric,
+        exact_long,
+        &equals_only,
+    ))
+}
+
+fn append_flag_identities(
+    raw: &str,
+    fields: &[ClassifiedField<'_>],
+    identities: &mut Vec<char>,
+) -> syn::Result<()> {
+    for name in raw.split(',').filter(|name| !name.is_empty()) {
+        let identity = policy_field(fields, name.trim())?.id;
+        if !identities.contains(&identity) {
+            identities.push(identity);
+        }
+    }
+    Ok(())
 }
 
 fn append_value_rules(
@@ -476,6 +502,8 @@ fn policy_literal(
     values: &[ValuePolicyLiteral],
     numeric_operands: &[(char, char)],
     first_numeric: Option<char>,
+    exact_long: bool,
+    equals_only: &[char],
 ) -> PolicyTokens {
     let value_rules = values.iter().map(|rule| {
         let ch = rule.ch;
@@ -491,6 +519,8 @@ fn policy_literal(
         values: quote! { &[#(#value_rules),*] },
         numeric_operands: quote! { &[#(#numeric_rules),*] },
         first_numeric: first,
+        exact_long,
+        equals_only: quote! { &[#(#equals_only),*] },
     }
 }
 
@@ -518,6 +548,8 @@ fn gen_meta(
     let value_rules = &policy.values;
     let numeric_operands = &policy.numeric_operands;
     let first_numeric = &policy.first_numeric;
+    let exact_long = policy.exact_long;
+    let equals_only = &policy.equals_only;
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
     let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
 
@@ -543,6 +575,8 @@ fn gen_meta(
             value_rules: #value_rules,
             numeric_operands: #numeric_operands,
             first_numeric_value: #first_numeric,
+            exact_long: #exact_long,
+            equals_only: #equals_only,
             tags: &[#( (#tag_keys, #tag_vals) ),*],
             description: &[#( #desc_lines ),*],
             extra: &[#( #extra_lines ),*],

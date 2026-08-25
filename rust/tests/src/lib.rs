@@ -998,4 +998,40 @@ mod tests {
         assert_eq!(zero.width, None);
         assert_eq!(&*zero.files, &["-0"]);
     }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "strict-long",
+        style = "gnu",
+        tag(exact_long),
+        tag(equals_only = "output")
+    )]
+    struct StrictLong {
+        #[flag(long = "output")]
+        output: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn exact_long_rejects_unambiguous_abbreviations() {
+        assert_eq!(
+            StrictLong::parse(&["--out=value"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("--out".to_owned())
+        );
+    }
+
+    #[test]
+    fn equals_only_requires_an_attached_long_value() {
+        assert_eq!(
+            StrictLong::parse(&["--output", "value"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("--output".to_owned())
+        );
+        assert_eq!(
+            StrictLong::parse(&["--output=value"])
+                .unwrap()
+                .output
+                .as_deref(),
+            Some("value")
+        );
+    }
 }

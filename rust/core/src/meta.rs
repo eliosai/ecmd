@@ -105,6 +105,10 @@ pub struct CommandDef<S: Storage = Static> {
     pub numeric_operands: S::List<NumericOperandRule>,
     /// First-argument obsolete numeric flag target.
     pub first_numeric_value: Option<char>,
+    /// Whether GNU long options require exact names.
+    pub exact_long: bool,
+    /// Valued long options that require an attached value.
+    pub equals_only: S::List<char>,
     /// Generic key-value tags for downstream consumers.
     pub tags: S::List<(S::Text, S::Text)>,
     /// Body paragraphs between summary and Options.
@@ -168,6 +172,8 @@ where
             self.value_rules.as_ref(),
             self.numeric_operands.as_ref(),
             self.first_numeric_value,
+            self.exact_long,
+            self.equals_only.as_ref(),
         );
         crate::parse::scan_with_policy(
             args,
@@ -373,6 +379,8 @@ impl CommandDef<Static> {
                 .collect(),
             numeric_operands: self.numeric_operands.to_vec(),
             first_numeric_value: self.first_numeric_value,
+            exact_long: self.exact_long,
+            equals_only: self.equals_only.to_vec(),
             tags: self
                 .tags
                 .iter()
@@ -518,6 +526,8 @@ mod tests {
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
             tags: &[],
             description,
             extra,
@@ -850,6 +860,8 @@ mod tests {
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -954,6 +966,8 @@ mod tests {
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -976,6 +990,8 @@ mod tests {
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -1009,6 +1025,8 @@ mod tests {
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
             tags: &[],
             description: &[],
             extra: &[],

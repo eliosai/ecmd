@@ -101,6 +101,8 @@ pub struct CommandDefDef {
     value_rules: Vec<ValueRule<Owned>>,
     numeric_operands: Vec<NumericOperandRule>,
     first_numeric_value: Option<char>,
+    exact_long: bool,
+    equals_only: Vec<char>,
     tags: Vec<(String, String)>,
     description: Vec<String>,
     extra: Vec<String>,
@@ -122,6 +124,8 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             value_rules: value.value_rules,
             numeric_operands: value.numeric_operands,
             first_numeric_value: value.first_numeric_value,
+            exact_long: value.exact_long,
+            equals_only: value.equals_only,
             tags: value.tags,
             description: value.description,
             extra: value.extra,
@@ -174,6 +178,8 @@ mod tests {
                 prefix: '+',
             }],
             first_numeric_value: Some('f'),
+            exact_long: true,
+            equals_only: vec!['f'],
             tags: vec![("kind".to_owned(), "extension".to_owned())],
             description: Vec::new(),
             extra: Vec::new(),
@@ -203,5 +209,7 @@ mod tests {
         assert_eq!(decoded.value_rules[0].default, "local");
         assert_eq!(decoded.numeric_operands[0].prefix, '+');
         assert_eq!(decoded.first_numeric_value, Some('f'));
+        assert!(decoded.exact_long);
+        assert_eq!(decoded.equals_only, ['f']);
     }
 }

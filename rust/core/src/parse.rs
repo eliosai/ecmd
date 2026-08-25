@@ -224,6 +224,8 @@ pub(crate) struct Policy<'a, S: Storage> {
     value_rules: &'a [ValueRule<S>],
     numeric_operands: &'a [NumericOperandRule],
     first_numeric_value: Option<char>,
+    exact_long: bool,
+    equals_only: &'a [char],
 }
 
 impl<S: Storage> Policy<'_, S> {
@@ -231,22 +233,32 @@ impl<S: Storage> Policy<'_, S> {
         value_rules: &[],
         numeric_operands: &[],
         first_numeric_value: None,
+        exact_long: false,
+        equals_only: &[],
     };
 
     pub(crate) const fn new<'a>(
         value_rules: &'a [ValueRule<S>],
         numeric_operands: &'a [NumericOperandRule],
         first_numeric_value: Option<char>,
+        exact_long: bool,
+        equals_only: &'a [char],
     ) -> Policy<'a, S> {
         Policy {
             value_rules,
             numeric_operands,
             first_numeric_value,
+            exact_long,
+            equals_only,
         }
     }
 
     fn value(&self, ch: char) -> Option<&ValueRule<S>> {
         self.value_rules.iter().find(|rule| rule.ch == ch)
+    }
+
+    fn requires_equals(&self, ch: char) -> bool {
+        self.equals_only.contains(&ch)
     }
 }
 
@@ -537,7 +549,13 @@ fn extract_value<S: Storage, P: Storage>(
     if let Some(rule) = config.policy.value(flag_ch) {
         return apply_short_value_rule(rule, cursor, config.flags, &label, chars.len() == 1);
     }
-    reject_option_value(cursor.following(), def, config.flags, &label)?;
+    reject_option_value(
+        cursor.following(),
+        def,
+        config.flags,
+        config.policy.exact_long,
+        &label,
+    )?;
     cursor.next_value(flag_ch)
 }
 
@@ -601,6 +619,7 @@ fn reject_option_value<S: Storage>(
     value: Option<&str>,
     def: &FlagDef<S>,
     flags: &[FlagDef<S>],
+    exact_long: bool,
     label: &str,
 ) -> Result<(), Error> {
     if def.allow_hyphen_values {
@@ -609,20 +628,20 @@ fn reject_option_value<S: Storage>(
     let Some(value) = value.filter(|value| value.starts_with('-') && value.len() > 1) else {
         return Ok(());
     };
-    if is_declared_option(value, flags) {
+    if is_declared_option(value, flags, exact_long) {
         Err(Error::MissingValue(label.to_owned()))
     } else {
         Err(Error::UnknownFlag(value.to_owned()))
     }
 }
 
-fn is_declared_option<S: Storage>(value: &str, flags: &[FlagDef<S>]) -> bool {
+fn is_declared_option<S: Storage>(value: &str, flags: &[FlagDef<S>], exact_long: bool) -> bool {
     if value == "--" {
         return true;
     }
     if let Some(name) = value.strip_prefix("--") {
         let name = name.split_once('=').map_or(name, |(name, _)| name);
-        return !matches!(resolve_long(name, flags), LongMatch::Unknown);
+        return !matches!(resolve_long(name, flags, exact_long), LongMatch::Unknown);
     }
     value
         .strip_prefix('-')
@@ -668,7 +687,7 @@ fn process_long<S: Storage, P: Storage>(
         .split_once('=')
         .map_or((spec, None), |(n, v)| (n, Some(v)));
     cursor.advance();
-    match resolve_long(name, config.flags) {
+    match resolve_long(name, config.flags, config.policy.exact_long) {
         LongMatch::Flag(def) => apply_long(def, name, inline, cursor, config, result),
         LongMatch::Help | LongMatch::Version if inline.is_some() => Err(Error::UnexpectedValue {
             flag: format!("--{name}"),
@@ -763,6 +782,9 @@ fn apply_long_value<S: Storage, P: Storage>(
 ) -> Result<(), Error> {
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
     let label = format!("--{name}");
+    if inline.is_none() && config.policy.requires_equals(def.ch) {
+        return Err(Error::MissingValue(label));
+    }
     let value = match (
         inline,
         config
@@ -779,7 +801,13 @@ fn apply_long_value<S: Storage, P: Storage>(
             take_long_numeric_or_default(cursor, default, &label)?
         }
         (None, _) => {
-            reject_option_value(cursor.peek(), def, config.flags, &label)?;
+            reject_option_value(
+                cursor.peek(),
+                def,
+                config.flags,
+                config.policy.exact_long,
+                &label,
+            )?;
             cursor.take_next(&label)?
         }
     };
@@ -821,7 +849,11 @@ fn take_long_numeric_or_default(
 }
 
 /// Exact match wins; otherwise fall back to unambiguous-prefix inference.
-fn resolve_long<'a, S: Storage>(name: &str, flags: &'a [FlagDef<S>]) -> LongMatch<'a, S> {
+fn resolve_long<'a, S: Storage>(
+    name: &str,
+    flags: &'a [FlagDef<S>],
+    exact: bool,
+) -> LongMatch<'a, S> {
     if !name.is_empty()
         && let Some(def) = flags.iter().find(|f| {
             f.long.as_ref() == name
@@ -836,6 +868,7 @@ fn resolve_long<'a, S: Storage>(name: &str, flags: &'a [FlagDef<S>]) -> LongMatc
     match name {
         "help" => LongMatch::Help,
         "version" => LongMatch::Version,
+        _ if exact => LongMatch::Unknown,
         _ => infer_long(name, flags),
     }
 }
