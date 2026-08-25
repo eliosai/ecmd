@@ -902,6 +902,8 @@ mod tests {
         tag(numeric_operands = "legacy_columns=-,pages=+")
     )]
     struct PolicyValues {
+        #[flag(short = 'a')]
+        all: bool,
         #[flag(long = "backup")]
         backup_control: Option<String>,
         #[flag(long = "context")]
@@ -943,6 +945,9 @@ mod tests {
         assert_eq!(valued.numbering.as_deref(), Some("x5"));
         assert_eq!(&*valued.files, &["file"]);
 
+        let option_shaped = PolicyValues::parse(&["-an", "-t"]).unwrap();
+        assert_eq!(option_shaped.numbering.as_deref(), Some("-t"));
+
         let defaulted = PolicyValues::parse(&["-n", "file"]).unwrap();
         assert_eq!(defaulted.numbering.as_deref(), Some("5"));
         assert_eq!(&*defaulted.files, &["file"]);
@@ -961,6 +966,10 @@ mod tests {
 
         let attached = PolicyValues::parse(&["-e4"]).unwrap();
         assert_eq!(attached.expand_tabs.as_deref(), Some("4"));
+        assert_eq!(
+            PolicyValues::parse(&["-ae", "-t"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-e".to_owned())
+        );
         assert_eq!(
             PolicyValues::parse(&["--expand-tabs"]).unwrap_err(),
             ecmd::error::Error::MissingValue("--expand-tabs".to_owned())

@@ -644,9 +644,24 @@ fn apply_short_value_rule<S: Storage, P: Storage>(
         ValueMode::ExactShortDefault if exact => {
             Ok(advance_with_default(cursor, rule.default.as_ref()))
         }
-        ValueMode::ExactShortDefault => cursor.next_value(rule.ch),
+        ValueMode::ExactShortDefault => take_non_option_next(cursor, flags, label, rule.ch),
         ValueMode::AnyNextOrDefault => Ok(take_any_next_or_default(cursor, rule.default.as_ref())),
     }
+}
+
+fn take_non_option_next<S: Storage>(
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    label: &str,
+    ch: char,
+) -> Result<String, Error> {
+    if cursor
+        .following()
+        .is_some_and(|value| is_option_boundary(value, flags))
+    {
+        return Err(Error::MissingValue(label.to_owned()));
+    }
+    cursor.next_value(ch)
 }
 
 fn take_any_next_or_default(cursor: &mut Cursor<'_>, default: &str) -> String {
@@ -739,6 +754,9 @@ fn is_option_boundary<S: Storage>(value: &str, flags: &[FlagDef<S>]) -> bool {
 }
 
 fn is_numbering_spec(value: &str) -> bool {
+    if value.starts_with('-') && value.len() > 1 {
+        return true;
+    }
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         return false;
