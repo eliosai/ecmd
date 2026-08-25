@@ -306,13 +306,13 @@ fn process_first_numeric<S: Storage, P: Storage>(
     else {
         return Ok(false);
     };
-    let Some(value) = arg.strip_prefix('-').filter(|value| is_unsigned(value)) else {
+    let Some(value) = first_numeric_value(arg) else {
         return Ok(false);
     };
     let Some(def) = find_flag(ch, config.flags) else {
         return Ok(false);
     };
-    if value.bytes().all(|byte| byte == b'0') {
+    if first_numeric_is_operand(value) {
         result.operands.push(arg.to_owned());
     } else {
         record_unimplemented(def, arg, result);
@@ -322,6 +322,16 @@ fn process_first_numeric<S: Storage, P: Storage>(
     }
     cursor.advance();
     Ok(true)
+}
+
+fn first_numeric_value(arg: &str) -> Option<&str> {
+    arg.strip_prefix('-')
+        .filter(|value| value.as_bytes().first().is_some_and(u8::is_ascii_digit))
+}
+
+fn first_numeric_is_operand(value: &str) -> bool {
+    value.bytes().all(|byte| byte == b'0')
+        || (is_unsigned(value) && value.parse::<usize>().is_err())
 }
 
 fn process_numeric_operand<S: Storage, P: Storage>(

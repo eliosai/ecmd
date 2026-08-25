@@ -1003,6 +1003,14 @@ mod tests {
         assert_eq!(width.width.as_deref(), Some("10"));
         assert_eq!(&*width.files, &["file"]);
 
+        let malformed = ObsoleteWidth::parse(&["-25x"]).unwrap();
+        assert_eq!(malformed.width.as_deref(), Some("25x"));
+
+        let overflow = "-999999999999999999999";
+        let filename = ObsoleteWidth::parse(&[overflow]).unwrap();
+        assert_eq!(filename.width, None);
+        assert_eq!(&*filename.files, &[overflow]);
+
         let zero = ObsoleteWidth::parse(&["-0"]).unwrap();
         assert_eq!(zero.width, None);
         assert_eq!(&*zero.files, &["-0"]);
