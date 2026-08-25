@@ -348,6 +348,10 @@ struct PolicyTokens {
     first_numeric: TokenStream,
     exact_long: bool,
     equals_only: TokenStream,
+    attached_values: TokenStream,
+    separated_values: TokenStream,
+    prefixed_values: TokenStream,
+    exclusive_groups: TokenStream,
 }
 
 fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result<PolicyTokens> {
@@ -355,6 +359,10 @@ fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result
     let mut numeric_operands = Vec::new();
     let mut first_numeric = None;
     let mut equals_only = Vec::new();
+    let mut attached_values = Vec::new();
+    let mut separated_values = Vec::new();
+    let mut prefixed_values = Vec::new();
+    let mut exclusive_groups = Vec::new();
     let mut seen_values = HashSet::new();
     let exact_long = cmd.tags.iter().any(|(key, _)| key == "exact_long");
     for (key, value) in &cmd.tags {
@@ -365,6 +373,9 @@ fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result
                 Some(quote! { ::ecmd::policy::ValueMode::NumericNextOrDefault })
             }
             "exact_short_defaults" => Some(quote! { ::ecmd::policy::ValueMode::ExactShortDefault }),
+            "optional_any_next_values" => {
+                Some(quote! { ::ecmd::policy::ValueMode::AnyNextOrDefault })
+            }
             _ => None,
         };
         if let Some(mode) = mode {
@@ -375,15 +386,27 @@ fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result
             first_numeric = Some(policy_field(fields, value)?.id);
         } else if key == "equals_only" {
             append_flag_identities(value, fields, &mut equals_only)?;
+        } else if key == "attached_values" {
+            append_flag_identities(value, fields, &mut attached_values)?;
+        } else if key == "separated_values" {
+            append_flag_identities(value, fields, &mut separated_values)?;
+        } else if key == "prefixed_values" {
+            append_flag_identities(value, fields, &mut prefixed_values)?;
+        } else if key == "exclusive_flags" {
+            append_exclusive_groups(value, fields, &mut exclusive_groups)?;
         }
     }
-    Ok(policy_literal(
-        &values,
-        &numeric_operands,
+    Ok(policy_literal(&PolicySpec {
+        values: &values,
+        numeric_operands: &numeric_operands,
         first_numeric,
         exact_long,
-        &equals_only,
-    ))
+        equals_only: &equals_only,
+        attached_values: &attached_values,
+        separated_values: &separated_values,
+        prefixed_values: &prefixed_values,
+        exclusive_groups: &exclusive_groups,
+    }))
 }
 
 fn append_flag_identities(
@@ -395,6 +418,29 @@ fn append_flag_identities(
         let identity = policy_field(fields, name.trim())?.id;
         if !identities.contains(&identity) {
             identities.push(identity);
+        }
+    }
+    Ok(())
+}
+
+fn append_exclusive_groups(
+    raw: &str,
+    fields: &[ClassifiedField<'_>],
+    rules: &mut Vec<(char, u16)>,
+) -> syn::Result<()> {
+    let offset = rules
+        .iter()
+        .map(|(_, group)| *group)
+        .max()
+        .map_or(0, |group| group.saturating_add(1));
+    for (group, alternatives) in raw.split(';').enumerate() {
+        let group = u16::try_from(group)
+            .map_err(|_error| syn::Error::new(Span::call_site(), "too many exclusive groups"))?;
+        let group = offset
+            .checked_add(group)
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "too many exclusive groups"))?;
+        for name in alternatives.split(',').filter(|name| !name.is_empty()) {
+            rules.push((policy_any_field(fields, name.trim())?.id, group));
         }
     }
     Ok(())
@@ -454,11 +500,7 @@ fn policy_field<'a, 'field>(
     fields: &'a [ClassifiedField<'field>],
     name: &str,
 ) -> syn::Result<&'a ClassifiedField<'field>> {
-    let field = if let Some(field) = fields.iter().find(|field| field.ident == name) {
-        field
-    } else {
-        unique_policy_long(fields, name)?
-    };
+    let field = policy_any_field(fields, name)?;
     if matches!(
         field.role,
         FieldRole::ValuedFlag(_) | FieldRole::RepeatableValueFlag(_) | FieldRole::PolarValueFlag(_)
@@ -468,6 +510,25 @@ fn policy_field<'a, 'field>(
         Err(syn::Error::new_spanned(
             field.field,
             "policy field must be a valued flag",
+        ))
+    }
+}
+
+fn policy_any_field<'a, 'field>(
+    fields: &'a [ClassifiedField<'field>],
+    name: &str,
+) -> syn::Result<&'a ClassifiedField<'field>> {
+    let field = if let Some(field) = fields.iter().find(|field| field.ident == name) {
+        field
+    } else {
+        unique_policy_long(fields, name)?
+    };
+    if flag_attrs(&field.role).is_some() {
+        Ok(field)
+    } else {
+        Err(syn::Error::new_spanned(
+            field.field,
+            "policy field must be a flag",
         ))
     }
 }
@@ -498,30 +559,49 @@ fn policy_long(field: &ClassifiedField<'_>, name: &str) -> bool {
     })
 }
 
-fn policy_literal(
-    values: &[ValuePolicyLiteral],
-    numeric_operands: &[(char, char)],
+struct PolicySpec<'a> {
+    values: &'a [ValuePolicyLiteral],
+    numeric_operands: &'a [(char, char)],
     first_numeric: Option<char>,
     exact_long: bool,
-    equals_only: &[char],
-) -> PolicyTokens {
-    let value_rules = values.iter().map(|rule| {
+    equals_only: &'a [char],
+    attached_values: &'a [char],
+    separated_values: &'a [char],
+    prefixed_values: &'a [char],
+    exclusive_groups: &'a [(char, u16)],
+}
+
+fn policy_literal(spec: &PolicySpec<'_>) -> PolicyTokens {
+    let value_rules = spec.values.iter().map(|rule| {
         let ch = rule.ch;
         let mode = &rule.mode;
         let default = &rule.default;
         quote! { ::ecmd::policy::ValueRule { ch: #ch, mode: #mode, default: #default } }
     });
-    let numeric_rules = numeric_operands.iter().map(|(ch, prefix)| {
+    let numeric_rules = spec.numeric_operands.iter().map(|(ch, prefix)| {
         quote! { ::ecmd::policy::NumericOperandRule { ch: #ch, prefix: #prefix } }
     });
-    let first = first_numeric.map_or_else(|| quote! { None }, |ch| quote! { Some(#ch) });
+    let first = spec
+        .first_numeric
+        .map_or_else(|| quote! { None }, |ch| quote! { Some(#ch) });
+    let exclusive_rules = spec.exclusive_groups.iter().map(|(ch, group)| {
+        quote! { ::ecmd::policy::ExclusiveRule { ch: #ch, group: #group } }
+    });
     PolicyTokens {
         values: quote! { &[#(#value_rules),*] },
         numeric_operands: quote! { &[#(#numeric_rules),*] },
         first_numeric: first,
-        exact_long,
-        equals_only: quote! { &[#(#equals_only),*] },
+        exact_long: spec.exact_long,
+        equals_only: identities_literal(spec.equals_only),
+        attached_values: identities_literal(spec.attached_values),
+        separated_values: identities_literal(spec.separated_values),
+        prefixed_values: identities_literal(spec.prefixed_values),
+        exclusive_groups: quote! { &[#(#exclusive_rules),*] },
     }
+}
+
+fn identities_literal(identities: &[char]) -> TokenStream {
+    quote! { &[#(#identities),*] }
 }
 
 // ── Meta codegen ────────────────────────────────────────────────
@@ -550,6 +630,10 @@ fn gen_meta(
     let first_numeric = &policy.first_numeric;
     let exact_long = policy.exact_long;
     let equals_only = &policy.equals_only;
+    let attached_values = &policy.attached_values;
+    let separated_values = &policy.separated_values;
+    let prefixed_values = &policy.prefixed_values;
+    let exclusive_groups = &policy.exclusive_groups;
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
     let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
 
@@ -577,6 +661,10 @@ fn gen_meta(
             first_numeric_value: #first_numeric,
             exact_long: #exact_long,
             equals_only: #equals_only,
+            attached_values: #attached_values,
+            separated_values: #separated_values,
+            prefixed_values: #prefixed_values,
+            exclusive_groups: #exclusive_groups,
             tags: &[#( (#tag_keys, #tag_vals) ),*],
             description: &[#( #desc_lines ),*],
             extra: &[#( #extra_lines ),*],

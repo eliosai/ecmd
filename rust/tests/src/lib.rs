@@ -1024,7 +1024,7 @@ mod tests {
     fn equals_only_requires_an_attached_long_value() {
         assert_eq!(
             StrictLong::parse(&["--output", "value"]).unwrap_err(),
-            ecmd::error::Error::MissingValue("--output".to_owned())
+            ecmd::error::Error::UnknownFlag("--output".to_owned())
         );
         assert_eq!(
             StrictLong::parse(&["--output=value"])
@@ -1032,6 +1032,100 @@ mod tests {
                 .output
                 .as_deref(),
             Some("value")
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "short-placement",
+        style = "gnu",
+        tag(separated_values = "separated"),
+        tag(attached_values = "attached")
+    )]
+    struct ShortPlacement {
+        #[flag(short = 's')]
+        separated: Option<String>,
+        #[flag(short = 'a')]
+        attached: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn short_value_placement_is_enforced() {
+        assert_eq!(
+            ShortPlacement::parse(&["-svalue"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("-svalue".to_owned())
+        );
+        assert_eq!(
+            ShortPlacement::parse(&["-a", "value"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-a".to_owned())
+        );
+        assert_eq!(
+            ShortPlacement::parse(&["-s", "one", "-atwo"])
+                .map(|command| (command.separated, command.attached)),
+            Ok((Some("one".to_owned()), Some("two".to_owned())))
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "legacy-context",
+        style = "gnu",
+        tag(optional_any_next_values = "context=3"),
+        tag(prefixed_values = "unified")
+    )]
+    struct LegacyContext {
+        #[flag(short = 'C')]
+        context: Option<String>,
+        #[flag(short = 'u')]
+        unified: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn optional_any_next_and_prefixed_values_preserve_legacy_forms() {
+        let defaulted = LegacyContext::parse(&["-C"]).unwrap();
+        assert_eq!(defaulted.context.as_deref(), Some("3"));
+
+        let consumed = LegacyContext::parse(&["-C", "-x", "file"]).unwrap();
+        assert_eq!(consumed.context.as_deref(), Some("-x"));
+        assert_eq!(&*consumed.files, &["file"]);
+
+        let prefixed = LegacyContext::parse(&["-0u", "file"]).unwrap();
+        assert_eq!(prefixed.unified.as_deref(), Some("0"));
+        assert_eq!(&*prefixed.files, &["file"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[expect(clippy::struct_excessive_bools, reason = "exclusive flag fixture")]
+    #[command(
+        name = "output-style",
+        style = "gnu",
+        tag(exclusive_flags = "normal;unified,context;side")
+    )]
+    struct OutputStyle {
+        #[flag(long = "normal")]
+        normal: bool,
+        #[flag(long = "unified")]
+        unified: bool,
+        #[flag(long = "context")]
+        context: bool,
+        #[flag(long = "side")]
+        side: bool,
+    }
+
+    #[test]
+    fn exclusive_groups_reject_only_cross_group_combinations() {
+        assert_eq!(
+            OutputStyle::parse(&["--unified", "--context"]).map(|_| ()),
+            Ok(())
+        );
+        assert_eq!(
+            OutputStyle::parse(&["--unified", "--side"]).unwrap_err(),
+            ecmd::error::Error::ConflictingFlags {
+                current: "--side".to_owned(),
+                previous: "--unified".to_owned(),
+            }
         );
     }
 }

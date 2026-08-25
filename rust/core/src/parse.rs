@@ -4,9 +4,9 @@
 //! separated values (`-o val`), `--` terminator, and `+` polarity.
 
 use crate::error::Error;
-use crate::meta::{Owned, Static, Storage};
+use crate::meta::{CommandDef, Owned, Static, Storage};
 use crate::polarity::Polarity;
-use crate::policy::{NumericOperandRule, ValueMode, ValueRule};
+use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
 use crate::style::Style;
 
 // ── Public types ────────────────────────────────────────────────
@@ -226,6 +226,10 @@ pub(crate) struct Policy<'a, S: Storage> {
     first_numeric_value: Option<char>,
     exact_long: bool,
     equals_only: &'a [char],
+    attached_values: &'a [char],
+    separated_values: &'a [char],
+    prefixed_values: &'a [char],
+    exclusive_groups: &'a [ExclusiveRule],
 }
 
 impl<S: Storage> Policy<'_, S> {
@@ -235,21 +239,23 @@ impl<S: Storage> Policy<'_, S> {
         first_numeric_value: None,
         exact_long: false,
         equals_only: &[],
+        attached_values: &[],
+        separated_values: &[],
+        prefixed_values: &[],
+        exclusive_groups: &[],
     };
 
-    pub(crate) const fn new<'a>(
-        value_rules: &'a [ValueRule<S>],
-        numeric_operands: &'a [NumericOperandRule],
-        first_numeric_value: Option<char>,
-        exact_long: bool,
-        equals_only: &'a [char],
-    ) -> Policy<'a, S> {
+    pub(crate) fn from_definition(definition: &CommandDef<S>) -> Policy<'_, S> {
         Policy {
-            value_rules,
-            numeric_operands,
-            first_numeric_value,
-            exact_long,
-            equals_only,
+            value_rules: definition.value_rules.as_ref(),
+            numeric_operands: definition.numeric_operands.as_ref(),
+            first_numeric_value: definition.first_numeric_value,
+            exact_long: definition.exact_long,
+            equals_only: definition.equals_only.as_ref(),
+            attached_values: definition.attached_values.as_ref(),
+            separated_values: definition.separated_values.as_ref(),
+            prefixed_values: definition.prefixed_values.as_ref(),
+            exclusive_groups: definition.exclusive_groups.as_ref(),
         }
     }
 
@@ -259,6 +265,24 @@ impl<S: Storage> Policy<'_, S> {
 
     fn requires_equals(&self, ch: char) -> bool {
         self.equals_only.contains(&ch)
+    }
+
+    fn requires_attached(&self, ch: char) -> bool {
+        self.attached_values.contains(&ch)
+    }
+
+    fn requires_separated(&self, ch: char) -> bool {
+        self.separated_values.contains(&ch)
+    }
+
+    fn accepts_prefix(&self, ch: char) -> bool {
+        self.prefixed_values.contains(&ch)
+    }
+
+    fn exclusive_group(&self, ch: char) -> Option<u16> {
+        self.exclusive_groups
+            .iter()
+            .find_map(|rule| (rule.ch == ch).then_some(rule.group))
     }
 }
 
@@ -294,6 +318,7 @@ fn process_first_numeric<S: Storage, P: Storage>(
         record_unimplemented(def, arg, result);
         reject_repeat(def, result, arg, config.style)?;
         result.flags.push(Parsed::Value(ch, value.to_owned()));
+        reject_latest_conflict(result, config, arg)?;
     }
     cursor.advance();
     Ok(true)
@@ -318,6 +343,7 @@ fn process_numeric_operand<S: Storage, P: Storage>(
     record_unimplemented(def, arg, result);
     reject_repeat(def, result, arg, config.style)?;
     result.flags.push(Parsed::Value(rule.ch, value.to_owned()));
+    reject_latest_conflict(result, config, arg)?;
     cursor.advance();
     Ok(true)
 }
@@ -430,6 +456,9 @@ fn process_cluster<S: Storage, P: Storage>(
     config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
+    if process_prefixed_value(chars, polarity, cursor, config, result)? {
+        return Ok(());
+    }
     if try_passthrough(
         chars,
         cursor,
@@ -441,6 +470,37 @@ fn process_cluster<S: Storage, P: Storage>(
         return Ok(());
     }
     parse_known_cluster(chars, polarity, cursor, config, result)
+}
+
+fn process_prefixed_value<S: Storage, P: Storage>(
+    chars: &str,
+    polarity: Polarity,
+    cursor: &mut Cursor<'_>,
+    config: &ScanConfig<'_, S, P>,
+    result: &mut ScanResult,
+) -> Result<bool, Error> {
+    let Some((last, prefix)) = chars.as_bytes().split_last() else {
+        return Ok(false);
+    };
+    let ch = char::from(*last);
+    if polarity != Polarity::On
+        || prefix.is_empty()
+        || !prefix.iter().all(u8::is_ascii_digit)
+        || !config.policy.accepts_prefix(ch)
+    {
+        return Ok(false);
+    }
+    let Some(def) = find_flag(ch, config.flags) else {
+        return Ok(false);
+    };
+    let value = prefix.iter().copied().map(char::from).collect();
+    let label = format!("-{chars}");
+    record_unimplemented(def, &label, result);
+    reject_repeat(def, result, &label, config.style)?;
+    result.flags.push(Parsed::Value(ch, value));
+    reject_latest_conflict(result, config, &label)?;
+    cursor.advance();
+    Ok(true)
 }
 
 fn try_passthrough<S: Storage>(
@@ -498,10 +558,12 @@ fn parse_known_cluster<S: Storage, P: Storage>(
             FlagKind::Bool | FlagKind::Noop => {
                 reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 result.flags.push(Parsed::Bool(ch));
+                reject_latest_conflict(result, config, &format!("-{ch}"))?;
             }
             FlagKind::Polar => {
                 reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 result.flags.push(Parsed::Polar(ch, polarity));
+                reject_latest_conflict(result, config, &format!("-{ch}"))?;
             }
             FlagKind::Value | FlagKind::PolarValue => {
                 let value = extract_value(chars, bi, cursor, ch, def, config)?;
@@ -511,6 +573,7 @@ fn parse_known_cluster<S: Storage, P: Storage>(
                     _ => Parsed::PolarValue(ch, polarity, value),
                 };
                 result.flags.push(parsed);
+                reject_latest_conflict(result, config, &format!("-{ch}"))?;
                 return Ok(());
             }
         }
@@ -541,11 +604,17 @@ fn extract_value<S: Storage, P: Storage>(
     let after = byte_pos.saturating_add(1);
     let remainder = chars.get(after..).unwrap_or_default();
     if !remainder.is_empty() {
+        if config.policy.requires_separated(flag_ch) {
+            return Err(Error::UnknownFlag(format!("-{chars}")));
+        }
         cursor.advance();
         // clap parity: a single leading `=` is the attached-value separator (`-c=5` → `5`).
         return Ok(remainder.strip_prefix('=').unwrap_or(remainder).to_owned());
     }
     let label = format!("-{flag_ch}");
+    if config.policy.requires_attached(flag_ch) {
+        return Err(Error::MissingValue(label));
+    }
     if let Some(rule) = config.policy.value(flag_ch) {
         return apply_short_value_rule(rule, cursor, config.flags, &label, chars.len() == 1);
     }
@@ -576,6 +645,18 @@ fn apply_short_value_rule<S: Storage, P: Storage>(
             Ok(advance_with_default(cursor, rule.default.as_ref()))
         }
         ValueMode::ExactShortDefault => cursor.next_value(rule.ch),
+        ValueMode::AnyNextOrDefault => Ok(take_any_next_or_default(cursor, rule.default.as_ref())),
+    }
+}
+
+fn take_any_next_or_default(cursor: &mut Cursor<'_>, default: &str) -> String {
+    match cursor.following() {
+        Some(value) => {
+            cursor.advance();
+            cursor.advance();
+            value.to_owned()
+        }
+        None => advance_with_default(cursor, default),
     }
 }
 
@@ -688,7 +769,10 @@ fn process_long<S: Storage, P: Storage>(
         .map_or((spec, None), |(n, v)| (n, Some(v)));
     cursor.advance();
     match resolve_long(name, config.flags, config.policy.exact_long) {
-        LongMatch::Flag(def) => apply_long(def, name, inline, cursor, config, result),
+        LongMatch::Flag(def) => {
+            apply_long(def, name, inline, cursor, config, result)?;
+            reject_latest_conflict(result, config, &format!("--{name}"))
+        }
         LongMatch::Help | LongMatch::Version if inline.is_some() => Err(Error::UnexpectedValue {
             flag: format!("--{name}"),
             value: inline.unwrap_or_default().to_owned(),
@@ -740,6 +824,41 @@ fn reject_repeat<S: Storage>(
     Err(Error::RepeatedFlag(label.to_owned()))
 }
 
+fn reject_latest_conflict<S: Storage, P: Storage>(
+    result: &ScanResult,
+    config: &ScanConfig<'_, S, P>,
+    current: &str,
+) -> Result<(), Error> {
+    let Some(current_ch) = result.flags.last().map(parsed_char) else {
+        return Ok(());
+    };
+    let Some(current_group) = config.policy.exclusive_group(current_ch) else {
+        return Ok(());
+    };
+    let previous = result.flags.iter().rev().skip(1).find_map(|parsed| {
+        let ch = parsed_char(parsed);
+        config
+            .policy
+            .exclusive_group(ch)
+            .filter(|group| *group != current_group)
+            .and_then(|_| find_flag(ch, config.flags))
+    });
+    previous.map_or(Ok(()), |def| {
+        Err(Error::ConflictingFlags {
+            current: current.to_owned(),
+            previous: preferred_label(def),
+        })
+    })
+}
+
+fn preferred_label<S: Storage>(def: &FlagDef<S>) -> String {
+    if def.long.as_ref().is_empty() {
+        format!("-{}", def.ch)
+    } else {
+        format!("--{}", def.long.as_ref())
+    }
+}
+
 const fn parsed_char(parsed: &Parsed) -> char {
     match parsed {
         Parsed::Bool(ch)
@@ -783,7 +902,7 @@ fn apply_long_value<S: Storage, P: Storage>(
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
     let label = format!("--{name}");
     if inline.is_none() && config.policy.requires_equals(def.ch) {
-        return Err(Error::MissingValue(label));
+        return Err(Error::UnknownFlag(label));
     }
     let value = match (
         inline,
@@ -799,6 +918,9 @@ fn apply_long_value<S: Storage, P: Storage>(
         }
         (None, Some((ValueMode::NumericNextOrDefault, default))) => {
             take_long_numeric_or_default(cursor, default, &label)?
+        }
+        (None, Some((ValueMode::AnyNextOrDefault, default))) => {
+            take_long_any_or_default(cursor, default, &label)?
         }
         (None, _) => {
             reject_option_value(
@@ -845,6 +967,17 @@ fn take_long_numeric_or_default(
         Some(value) if is_numbering_spec(value) => cursor.take_next(label),
         Some(_) => Ok(default.to_owned()),
         None => Err(Error::MissingValue(label.to_owned())),
+    }
+}
+
+fn take_long_any_or_default(
+    cursor: &mut Cursor<'_>,
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    match cursor.peek() {
+        Some(_) => cursor.take_next(label),
+        None => Ok(default.to_owned()),
     }
 }
 

@@ -30,7 +30,7 @@
 
 use crate::error::Error;
 use crate::parse::{FlagDef, FlagKind, OnUnknown};
-use crate::policy::{NumericOperandRule, ValueRule};
+use crate::policy::{ExclusiveRule, NumericOperandRule, ValueRule};
 use crate::style::Style;
 
 /// Storage used by command metadata
@@ -109,6 +109,14 @@ pub struct CommandDef<S: Storage = Static> {
     pub exact_long: bool,
     /// Valued long options that require an attached value.
     pub equals_only: S::List<char>,
+    /// Short options that require an attached value.
+    pub attached_values: S::List<char>,
+    /// Short options that require a separate value.
+    pub separated_values: S::List<char>,
+    /// Short options accepting a leading numeric value.
+    pub prefixed_values: S::List<char>,
+    /// Option memberships in mutually exclusive groups.
+    pub exclusive_groups: S::List<ExclusiveRule>,
     /// Generic key-value tags for downstream consumers.
     pub tags: S::List<(S::Text, S::Text)>,
     /// Body paragraphs between summary and Options.
@@ -168,13 +176,7 @@ where
     ///
     /// Returns an error when the arguments violate the declared shape.
     pub fn scan(&self, args: &[&str]) -> Result<crate::parse::ScanResult, Error> {
-        let policy = crate::parse::Policy::new(
-            self.value_rules.as_ref(),
-            self.numeric_operands.as_ref(),
-            self.first_numeric_value,
-            self.exact_long,
-            self.equals_only.as_ref(),
-        );
+        let policy = crate::parse::Policy::from_definition(self);
         crate::parse::scan_with_policy(
             args,
             self.flags(),
@@ -381,6 +383,10 @@ impl CommandDef<Static> {
             first_numeric_value: self.first_numeric_value,
             exact_long: self.exact_long,
             equals_only: self.equals_only.to_vec(),
+            attached_values: self.attached_values.to_vec(),
+            separated_values: self.separated_values.to_vec(),
+            prefixed_values: self.prefixed_values.to_vec(),
+            exclusive_groups: self.exclusive_groups.to_vec(),
             tags: self
                 .tags
                 .iter()
@@ -528,6 +534,10 @@ mod tests {
             first_numeric_value: None,
             exact_long: false,
             equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description,
             extra,
@@ -862,6 +872,10 @@ mod tests {
             first_numeric_value: None,
             exact_long: false,
             equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -968,6 +982,10 @@ mod tests {
             first_numeric_value: None,
             exact_long: false,
             equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -992,6 +1010,10 @@ mod tests {
             first_numeric_value: None,
             exact_long: false,
             equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -1027,6 +1049,10 @@ mod tests {
             first_numeric_value: None,
             exact_long: false,
             equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],

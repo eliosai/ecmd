@@ -6,7 +6,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::meta::{CommandDef, Owned, PositionalDef};
 use crate::parse::FlagDef;
 use crate::parse::{FlagKind, OnUnknown};
-use crate::policy::{NumericOperandRule, ValueMode, ValueRule};
+use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
 use crate::style::Style;
 
 /// Archive adapter for an owned flag definition
@@ -103,6 +103,10 @@ pub struct CommandDefDef {
     first_numeric_value: Option<char>,
     exact_long: bool,
     equals_only: Vec<char>,
+    attached_values: Vec<char>,
+    separated_values: Vec<char>,
+    prefixed_values: Vec<char>,
+    exclusive_groups: Vec<ExclusiveRule>,
     tags: Vec<(String, String)>,
     description: Vec<String>,
     extra: Vec<String>,
@@ -126,6 +130,10 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             first_numeric_value: value.first_numeric_value,
             exact_long: value.exact_long,
             equals_only: value.equals_only,
+            attached_values: value.attached_values,
+            separated_values: value.separated_values,
+            prefixed_values: value.prefixed_values,
+            exclusive_groups: value.exclusive_groups,
             tags: value.tags,
             description: value.description,
             extra: value.extra,
@@ -141,7 +149,7 @@ mod tests {
     use super::{ArchivedCommandDefDef, CommandDefDef};
     use crate::meta::{CommandDef, Owned};
     use crate::parse::{FlagDef, FlagKind, OnUnknown};
-    use crate::policy::{NumericOperandRule, ValueMode, ValueRule};
+    use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
     use crate::style::Style;
 
     #[test]
@@ -180,6 +188,10 @@ mod tests {
             first_numeric_value: Some('f'),
             exact_long: true,
             equals_only: vec!['f'],
+            attached_values: vec!['f'],
+            separated_values: vec!['s'],
+            prefixed_values: vec!['f'],
+            exclusive_groups: vec![ExclusiveRule { ch: 'f', group: 1 }],
             tags: vec![("kind".to_owned(), "extension".to_owned())],
             description: Vec::new(),
             extra: Vec::new(),
@@ -211,5 +223,12 @@ mod tests {
         assert_eq!(decoded.first_numeric_value, Some('f'));
         assert!(decoded.exact_long);
         assert_eq!(decoded.equals_only, ['f']);
+        assert_eq!(decoded.attached_values, ['f']);
+        assert_eq!(decoded.separated_values, ['s']);
+        assert_eq!(decoded.prefixed_values, ['f']);
+        assert_eq!(
+            decoded.exclusive_groups.first().map(|rule| rule.group),
+            Some(1)
+        );
     }
 }
