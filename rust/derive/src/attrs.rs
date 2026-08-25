@@ -292,6 +292,8 @@ fn extract_doc_lines(attrs: &[syn::Attribute]) -> Vec<String> {
             None
         })
         .map(|s| s.strip_prefix(' ').unwrap_or(&s).to_owned())
+        // an exact bare fence keeps rustdoc from reading an indented help block as a doctest
+        .filter(|line| line != "```text" && line != "```")
         .collect()
 }
 

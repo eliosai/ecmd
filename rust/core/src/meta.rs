@@ -680,9 +680,21 @@ where
             out.push_str(line);
             out.push('\n');
         }
+        if !self.description.as_ref().is_empty() {
+            out.push('\n');
+        }
         for line in self.description.as_ref() {
             out.push_str(line.as_ref());
             out.push('\n');
+        }
+        // GNU hand-tunes each block's columns, so a command may author its whole tail
+        if self.has_tag("gnu_literal_tail") {
+            out.push('\n');
+            for line in self.extra.as_ref() {
+                out.push_str(line.as_ref());
+                out.push('\n');
+            }
+            return out;
         }
         self.push_gnu_options(&mut out);
         for line in self.exit_status.as_ref() {
