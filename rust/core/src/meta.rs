@@ -27,6 +27,8 @@
 //! Two optional attributes on `#[command()]`:
 //! - `short_doc = "..."` — overrides auto-generated usage in help display
 //! - `extra_help("line", ...)` — tab-formatted content (replaces doc extra)
+//!
+//! `tag(verbatim_help)` emits the `# Options` block as the whole help page.
 
 use crate::error::Error;
 use crate::parse::{FlagDef, FlagKind, OnUnknown};
@@ -295,6 +297,10 @@ where
     /// Help text in the command's style: bash-builtin for POSIX, GNU for Gnu.
     #[must_use]
     pub fn help(&self) -> String {
+        // a bespoke page no dialect describes is authored whole and emitted untouched
+        if self.has_tag("verbatim_help") {
+            return self.verbatim_help();
+        }
         match self.help_style {
             HelpStyle::Gnu => return self.gnu_help(),
             HelpStyle::Clap | HelpStyle::ClapWide => return self.clap_help(),
@@ -663,6 +669,16 @@ where
             entries.insert(at, (label.to_owned(), desc.to_owned()));
         }
         entries
+    }
+
+    /// The authored `# Options` block, verbatim, as the entire help page.
+    fn verbatim_help(&self) -> String {
+        let mut out = String::with_capacity(512);
+        for line in self.extra.as_ref() {
+            out.push_str(line.as_ref());
+            out.push('\n');
+        }
+        out
     }
 
     fn gnu_help(&self) -> String {
@@ -1643,6 +1659,21 @@ mod tests {
     }
 
     #[test]
+    fn util_linux_help_hangs_a_literal_row_whose_description_opens_blank() {
+        let help = util_linux_def(&[
+            ("help_width", "27"),
+            (
+                "help_row",
+                "0\t-s, --input-separator, --separator <string>\t\npossible table delimiters",
+            ),
+        ])
+        .help();
+        assert!(help.contains(
+            "Options:\n -s, --input-separator, --separator <string>\n                             possible table delimiters\n"
+        ));
+    }
+
+    #[test]
     fn util_linux_help_separates_rows_and_appends_extra_blocks() {
         let mut def = util_linux_def(&[("help_row", "1\t\t")]);
         static EXTRA: [&str; 1] = ["Arguments:\n Values for <length> may carry a suffix."];
@@ -1724,6 +1755,35 @@ mod tests {
         assert!(help.contains("  -s, --suffix=SUFFIX\tremove a trailing SUFFIX; implies -a\n"));
         assert!(help.contains("  -h, --help\tdisplay this help and exit\n"));
         assert!(help.contains("  -V, --version\toutput version information and exit\n"));
+    }
+
+    #[test]
+    fn verbatim_help_emits_only_the_authored_block() {
+        let def: CommandDef = CommandDef {
+            name: "xxd",
+            about: "Make a hex dump or do the reverse",
+            short_doc: "xxd [options] [infile [outfile]]",
+            style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
+            on_unknown: OnUnknown::Reject,
+            permute: true,
+            flags: &GNU_FLAGS,
+            positionals: &[],
+            has_rest: true,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
+            tags: &[("verbatim_help", "")],
+            description: &["ignored"],
+            extra: &["Usage:", "       xxd [options]", "Options:", "    -a  autoskip"],
+            exit_status: &["ignored"],
+        };
+        assert_eq!(
+            def.help(),
+            "Usage:\n       xxd [options]\nOptions:\n    -a  autoskip\n"
+        );
     }
 
     #[test]
