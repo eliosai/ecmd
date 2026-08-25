@@ -223,8 +223,17 @@ fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStr
             ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true }
         });
     }
+    append_version_opt_out(&mut defs, cmd);
 
     quote! { #(#defs),* }
+}
+
+fn append_version_opt_out(defs: &mut Vec<TokenStream>, cmd: &CommandAttrs) {
+    if cmd.no_implicit_version {
+        defs.push(quote! {
+            ::ecmd::parse::FlagDef { ch: 'V', long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Bool, clears: &[], desc: "", value_name: "", hidden: true, implemented: false, repeatable: false, allow_hyphen_values: true }
+        });
+    }
 }
 
 fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
@@ -413,6 +422,7 @@ fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenSt
             ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true }
         });
     }
+    append_version_opt_out(&mut defs, cmd);
     quote! { #(#defs),* }
 }
 

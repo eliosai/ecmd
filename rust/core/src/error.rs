@@ -29,7 +29,24 @@ pub enum Error {
     /// An abbreviated long option matched more than one declared option.
     AmbiguousOption(String),
     /// A flag that takes no value was given one via `--flag=value`.
-    UnexpectedValue(String),
+    UnexpectedValue {
+        /// The flag that received the value.
+        flag: String,
+        /// The unexpected value.
+        value: String,
+    },
+    /// Two mutually exclusive flags were supplied.
+    ConflictingFlags {
+        /// The flag that exposed the conflict.
+        current: String,
+        /// The conflicting earlier flag.
+        previous: String,
+    },
+    /// A command rejected its first numeric shorthand.
+    FirstNumericValue {
+        /// The rejected numeric token.
+        value: String,
+    },
     /// A scalar flag was supplied more than once.
     RepeatedFlag(String),
     /// `--help` was requested; the caller should print help and exit 0.
@@ -56,9 +73,13 @@ impl fmt::Display for Error {
             } => write!(f, "{flag}: {value}: {reason}"),
             Self::UnknownCommand(name) => write!(f, "{name}: unknown command"),
             Self::AmbiguousOption(name) => write!(f, "{name}: option is ambiguous"),
-            Self::UnexpectedValue(name) => {
-                write!(f, "{name}: option doesn't allow an argument")
+            Self::UnexpectedValue { flag, .. } => {
+                write!(f, "{flag}: option doesn't allow an argument")
             }
+            Self::ConflictingFlags { current, previous } => {
+                write!(f, "{current} conflicts with {previous}")
+            }
+            Self::FirstNumericValue { value } => write!(f, "invalid number: {value}"),
             Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
             Self::HelpRequested => write!(f, "help requested"),
             Self::VersionRequested => write!(f, "version requested"),
@@ -108,6 +129,29 @@ mod tests {
             error.to_string(),
             "--verbose: option cannot be used multiple times"
         );
+    }
+
+    #[test]
+    fn unexpected_value_retains_the_flag_and_value() {
+        let error = Error::UnexpectedValue {
+            flag: "--help".into(),
+            value: "yes".into(),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "--help: option doesn't allow an argument"
+        );
+    }
+
+    #[test]
+    fn conflict_retains_both_occurrences() {
+        let error = Error::ConflictingFlags {
+            current: "--brief".into(),
+            previous: "--verbose".into(),
+        };
+
+        assert_eq!(error.to_string(), "--brief conflicts with --verbose");
     }
 
     #[test]

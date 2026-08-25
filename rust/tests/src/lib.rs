@@ -872,4 +872,22 @@ mod tests {
         );
         assert!(definition.help().contains("(external only)"));
     }
+
+    #[derive(Command, Debug)]
+    #[command(name = "watch", style = "gnu", no_implicit_version)]
+    struct VersionOptOut {
+        #[flag(short = 'v')]
+        version: bool,
+    }
+
+    #[test]
+    fn gnu_command_can_reject_the_implicit_uppercase_version_flag() {
+        assert_eq!(
+            VersionOptOut::parse(&["-V"]).unwrap_err(),
+            ecmd::error::Error::UnimplementedFlag("-V".to_owned())
+        );
+        assert!(VersionOptOut::parse(&["-v"]).unwrap().version);
+        assert!(VersionOptOut::def().help().contains("      --version"));
+        assert!(!VersionOptOut::def().help().contains("-V, --version"));
+    }
 }

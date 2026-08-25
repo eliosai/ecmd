@@ -463,9 +463,10 @@ fn process_long<S: Storage>(
     cursor.advance();
     match resolve_long(name, flags) {
         LongMatch::Flag(def) => apply_long(def, name, inline, cursor, flags, result),
-        LongMatch::Help | LongMatch::Version if inline.is_some() => {
-            Err(Error::UnexpectedValue(format!("--{name}")))
-        }
+        LongMatch::Help | LongMatch::Version if inline.is_some() => Err(Error::UnexpectedValue {
+            flag: format!("--{name}"),
+            value: inline.unwrap_or_default().to_owned(),
+        }),
         LongMatch::Help => Err(Error::HelpRequested),
         LongMatch::Version => Err(Error::VersionRequested),
         LongMatch::Ambiguous => Err(Error::AmbiguousOption(format!("--{name}"))),
@@ -529,8 +530,11 @@ fn apply_long_flag<S: Storage>(
     inline: Option<&str>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
-    if inline.is_some() {
-        return Err(Error::UnexpectedValue(format!("--{name}")));
+    if let Some(value) = inline {
+        return Err(Error::UnexpectedValue {
+            flag: format!("--{name}"),
+            value: value.to_owned(),
+        });
     }
     reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;
     result.flags.push(if matches!(def.kind, FlagKind::Bool) {
@@ -885,8 +889,14 @@ mod tests {
     fn gnu_reserved_actions_reject_inline_values() {
         for option in ["--help=value", "--version=value"] {
             let result = scan::<Static>(&[option], &[], OnUnknown::Reject, Style::Gnu, true);
-            let name = option.split_once('=').unwrap().0.to_owned();
-            assert_eq!(result.unwrap_err(), Error::UnexpectedValue(name));
+            let (flag, value) = option.split_once('=').unwrap();
+            assert_eq!(
+                result.unwrap_err(),
+                Error::UnexpectedValue {
+                    flag: flag.to_owned(),
+                    value: value.to_owned(),
+                }
+            );
         }
     }
 
@@ -1221,7 +1231,13 @@ mod tests {
             true,
         )
         .unwrap_err();
-        assert_eq!(e, Error::UnexpectedValue("--multiple".into()));
+        assert_eq!(
+            e,
+            Error::UnexpectedValue {
+                flag: "--multiple".into(),
+                value: "x".into(),
+            }
+        );
     }
 
     #[test]
