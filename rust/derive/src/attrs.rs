@@ -5,6 +5,10 @@ use syn::ext::IdentExt;
 use syn::{Expr, Field, Ident, Lit, Token};
 
 /// Struct-level command attributes.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "derive options are independent compile-time switches"
+)]
 pub struct CommandAttrs {
     pub name: String,
     pub style: String,

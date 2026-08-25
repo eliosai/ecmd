@@ -32,6 +32,7 @@
 
 use crate::error::Error;
 use crate::parse::{FlagDef, FlagKind, OnUnknown};
+use crate::policy::{ExclusiveRule, NumericOperandRule, ValueRule};
 use crate::style::{HelpStyle, Style};
 
 /// Storage used by command metadata
@@ -112,6 +113,24 @@ pub struct CommandDef<S: Storage = Static> {
     pub rest_default: S::Text,
     /// Whether the rest slot shows as required.
     pub rest_required: bool,
+    /// Missing-value behavior keyed by flag identity.
+    pub value_rules: S::List<ValueRule<S>>,
+    /// Legacy numeric operand routes.
+    pub numeric_operands: S::List<NumericOperandRule>,
+    /// First-argument obsolete numeric flag target.
+    pub first_numeric_value: Option<char>,
+    /// Whether GNU long options require exact names.
+    pub exact_long: bool,
+    /// Valued long options that require an attached value.
+    pub equals_only: S::List<char>,
+    /// Short options that require an attached value.
+    pub attached_values: S::List<char>,
+    /// Short options that require a separate value.
+    pub separated_values: S::List<char>,
+    /// Short options accepting a leading numeric value.
+    pub prefixed_values: S::List<char>,
+    /// Option memberships in mutually exclusive groups.
+    pub exclusive_groups: S::List<ExclusiveRule>,
     /// Generic key-value tags for downstream consumers.
     pub tags: S::List<(S::Text, S::Text)>,
     /// Body paragraphs between summary and Options.
@@ -140,6 +159,15 @@ impl CommandDef<Static> {
         rest_desc: "",
         rest_default: "",
         rest_required: false,
+        value_rules: &[],
+        numeric_operands: &[],
+        first_numeric_value: None,
+        exact_long: false,
+        equals_only: &[],
+        attached_values: &[],
+        separated_values: &[],
+        prefixed_values: &[],
+        exclusive_groups: &[],
         tags: &[],
         description: &[],
         extra: &[],
@@ -165,6 +193,15 @@ impl Default for CommandDef<Owned> {
             rest_desc: String::new(),
             rest_default: String::new(),
             rest_required: false,
+            value_rules: Vec::new(),
+            numeric_operands: Vec::new(),
+            first_numeric_value: None,
+            exact_long: false,
+            equals_only: Vec::new(),
+            attached_values: Vec::new(),
+            separated_values: Vec::new(),
+            prefixed_values: Vec::new(),
+            exclusive_groups: Vec::new(),
             tags: Vec::new(),
             description: Vec::new(),
             extra: Vec::new(),
@@ -230,9 +267,11 @@ where
     ///
     /// Returns an error when the arguments violate the declared shape.
     pub fn scan(&self, args: &[&str]) -> Result<crate::parse::ScanResult, Error> {
-        crate::parse::scan(
+        let policy = crate::parse::Policy::from_definition(self);
+        crate::parse::scan_with_policy(
             args,
             self.flags(),
+            policy,
             self.on_unknown,
             self.style,
             self.permute,
@@ -632,7 +671,11 @@ where
         }
         let pair = self.tag_width("help_pair_width", width);
         let owns = |ch: char| self.flags().iter().any(|flag| flag.ch == ch);
-        let help_label = if owns('h') { "    --help" } else { "-h, --help" };
+        let help_label = if owns('h') {
+            "    --help"
+        } else {
+            "-h, --help"
+        };
         push_util_linux_entry(
             &mut out,
             help_label,
@@ -677,8 +720,7 @@ where
                 continue;
             }
             let mut parts = value.as_ref().splitn(3, '\t');
-            let (Some(at), Some(label), Some(desc)) =
-                (parts.next(), parts.next(), parts.next())
+            let (Some(at), Some(label), Some(desc)) = (parts.next(), parts.next(), parts.next())
             else {
                 continue;
             };
@@ -787,6 +829,20 @@ impl CommandDef<Static> {
             rest_desc: self.rest_desc.to_owned(),
             rest_default: self.rest_default.to_owned(),
             rest_required: self.rest_required,
+            value_rules: self
+                .value_rules
+                .iter()
+                .cloned()
+                .map(ValueRule::into_owned)
+                .collect(),
+            numeric_operands: self.numeric_operands.to_vec(),
+            first_numeric_value: self.first_numeric_value,
+            exact_long: self.exact_long,
+            equals_only: self.equals_only.to_vec(),
+            attached_values: self.attached_values.to_vec(),
+            separated_values: self.separated_values.to_vec(),
+            prefixed_values: self.prefixed_values.to_vec(),
+            exclusive_groups: self.exclusive_groups.to_vec(),
             tags: self
                 .tags
                 .iter()
@@ -1129,6 +1185,15 @@ mod tests {
             rest_desc: "",
             rest_default: "",
             rest_required: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description,
             extra,
@@ -1488,6 +1553,15 @@ mod tests {
             rest_desc: "",
             rest_default: "",
             rest_required: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -1615,6 +1689,15 @@ mod tests {
             rest_desc: "",
             rest_default: "",
             rest_required: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -1667,7 +1750,10 @@ mod tests {
     fn util_linux_help_injects_a_literal_row_at_its_index() {
         let help = util_linux_def(&[
             ("help_width", "27"),
-            ("help_row", "0\t-<sig>\tsignal to send (either number or name)"),
+            (
+                "help_row",
+                "0\t-<sig>\tsignal to send (either number or name)",
+            ),
         ])
         .help();
         assert!(help.contains(
@@ -1756,6 +1842,15 @@ mod tests {
             rest_desc: "",
             rest_default: "",
             rest_required: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -1794,8 +1889,14 @@ mod tests {
             rest_required: false,
             tags: &[("verbatim_help", "")],
             description: &["ignored"],
-            extra: &["Usage:", "       xxd [options]", "Options:", "    -a  autoskip"],
+            extra: &[
+                "Usage:",
+                "       xxd [options]",
+                "Options:",
+                "    -a  autoskip",
+            ],
             exit_status: &["ignored"],
+            ..CommandDef::EMPTY
         };
         assert_eq!(
             def.help(),
@@ -1821,6 +1922,15 @@ mod tests {
             rest_desc: "",
             rest_default: "",
             rest_required: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
+            exact_long: false,
+            equals_only: &[],
+            attached_values: &[],
+            separated_values: &[],
+            prefixed_values: &[],
+            exclusive_groups: &[],
             tags: &[],
             description: &[],
             extra: &[],
@@ -1925,6 +2035,7 @@ mod tests {
             description: &[],
             extra: &[],
             exit_status: &[],
+            ..CommandDef::EMPTY
         };
 
         let expected = "\

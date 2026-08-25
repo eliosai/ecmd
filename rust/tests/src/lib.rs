@@ -1331,4 +1331,277 @@ mod tests {
         );
         assert!(definition.help().contains("(external only)"));
     }
+
+    #[derive(Command, Debug)]
+    #[command(name = "watch", style = "gnu", no_implicit_version)]
+    struct VersionOptOut {
+        #[flag(short = 'v')]
+        version: bool,
+    }
+
+    #[test]
+    fn gnu_command_can_reject_the_implicit_uppercase_version_flag() {
+        assert_eq!(
+            VersionOptOut::parse(&["-V"]).unwrap_err(),
+            ecmd::error::Error::UnimplementedFlag("-V".to_owned())
+        );
+        assert!(VersionOptOut::parse(&["-v"]).unwrap().version);
+        assert!(VersionOptOut::def().help().contains("      --version"));
+        assert!(!VersionOptOut::def().help().contains("-V, --version"));
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "policy-values",
+        style = "gnu",
+        tag(optional_values = "backup=@bare"),
+        tag(optional_next_values = "context=default"),
+        tag(numeric_next_values = "numbering=5"),
+        tag(exact_short_defaults = "expand_tabs=8"),
+        tag(numeric_operands = "legacy_columns=-,pages=+")
+    )]
+    struct PolicyValues {
+        #[flag(short = 'a')]
+        all: bool,
+        #[flag(long = "backup")]
+        backup_control: Option<String>,
+        #[flag(long = "context")]
+        context: Option<String>,
+        #[flag(short = 'n', long = "number")]
+        numbering: Option<String>,
+        #[flag(short = 'e', long = "expand-tabs")]
+        expand_tabs: Option<String>,
+        #[flag(long = "", hide)]
+        legacy_columns: Option<String>,
+        #[flag(long = "pages")]
+        pages: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn optional_value_uses_default_without_consuming_operand() {
+        let command = PolicyValues::parse(&["--backup", "source"]).unwrap();
+
+        assert_eq!(command.backup_control.as_deref(), Some("@bare"));
+        assert_eq!(&*command.files, &["source"]);
+    }
+
+    #[test]
+    fn optional_next_value_consumes_an_operand_or_uses_default() {
+        let valued = PolicyValues::parse(&["--context", "label"]).unwrap();
+        assert_eq!(valued.context.as_deref(), Some("label"));
+        assert!(valued.files.is_empty());
+
+        let defaulted = PolicyValues::parse(&["--context", "--backup", "source"]).unwrap();
+        assert_eq!(defaulted.context.as_deref(), Some("default"));
+        assert_eq!(defaulted.backup_control.as_deref(), Some("@bare"));
+        assert_eq!(&*defaulted.files, &["source"]);
+    }
+
+    #[test]
+    fn numeric_next_value_consumes_only_its_numeric_shape() {
+        let valued = PolicyValues::parse(&["-n", "x5", "file"]).unwrap();
+        assert_eq!(valued.numbering.as_deref(), Some("x5"));
+        assert_eq!(&*valued.files, &["file"]);
+
+        let option_shaped = PolicyValues::parse(&["-an", "-t"]).unwrap();
+        assert_eq!(option_shaped.numbering.as_deref(), Some("-t"));
+
+        let defaulted = PolicyValues::parse(&["-n", "file"]).unwrap();
+        assert_eq!(defaulted.numbering.as_deref(), Some("5"));
+        assert_eq!(&*defaulted.files, &["file"]);
+
+        assert_eq!(
+            PolicyValues::parse(&["-n"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-n".to_owned())
+        );
+    }
+
+    #[test]
+    fn exact_short_value_uses_default_without_changing_long_form() {
+        let defaulted = PolicyValues::parse(&["-e", "file"]).unwrap();
+        assert_eq!(defaulted.expand_tabs.as_deref(), Some("8"));
+        assert_eq!(&*defaulted.files, &["file"]);
+
+        let attached = PolicyValues::parse(&["-e4"]).unwrap();
+        assert_eq!(attached.expand_tabs.as_deref(), Some("4"));
+        assert_eq!(
+            PolicyValues::parse(&["-ae", "-t"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-e".to_owned())
+        );
+        assert_eq!(
+            PolicyValues::parse(&["--expand-tabs"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("--expand-tabs".to_owned())
+        );
+    }
+
+    #[test]
+    fn numeric_operands_route_to_typed_fields_after_other_operands() {
+        let command = PolicyValues::parse(&["file", "-3", "+2:4"]).unwrap();
+
+        assert_eq!(command.legacy_columns.as_deref(), Some("3"));
+        assert_eq!(command.pages.as_deref(), Some("2:4"));
+        assert_eq!(&*command.files, &["file"]);
+    }
+
+    #[derive(Command)]
+    #[command(
+        name = "obsolete-width",
+        style = "gnu",
+        tag(first_numeric_value = "width")
+    )]
+    struct ObsoleteWidth {
+        #[flag(short = 'w', long = "width")]
+        width: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn first_positive_numeric_option_routes_to_declared_value() {
+        let width = ObsoleteWidth::parse(&["-10", "file"]).unwrap();
+        assert_eq!(width.width.as_deref(), Some("10"));
+        assert_eq!(&*width.files, &["file"]);
+
+        let malformed = ObsoleteWidth::parse(&["-25x"]).unwrap();
+        assert_eq!(malformed.width.as_deref(), Some("25x"));
+
+        let overflow = "-999999999999999999999";
+        let filename = ObsoleteWidth::parse(&[overflow]).unwrap();
+        assert_eq!(filename.width, None);
+        assert_eq!(&*filename.files, &[overflow]);
+
+        let zero = ObsoleteWidth::parse(&["-0"]).unwrap();
+        assert_eq!(zero.width, None);
+        assert_eq!(&*zero.files, &["-0"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "strict-long",
+        style = "gnu",
+        tag(exact_long),
+        tag(equals_only = "output")
+    )]
+    struct StrictLong {
+        #[flag(long = "output")]
+        output: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn exact_long_rejects_unambiguous_abbreviations() {
+        assert_eq!(
+            StrictLong::parse(&["--out=value"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("--out".to_owned())
+        );
+    }
+
+    #[test]
+    fn equals_only_requires_an_attached_long_value() {
+        assert_eq!(
+            StrictLong::parse(&["--output", "value"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("--output".to_owned())
+        );
+        assert_eq!(
+            StrictLong::parse(&["--output=value"])
+                .unwrap()
+                .output
+                .as_deref(),
+            Some("value")
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "short-placement",
+        style = "gnu",
+        tag(separated_values = "separated"),
+        tag(attached_values = "attached")
+    )]
+    struct ShortPlacement {
+        #[flag(short = 's')]
+        separated: Option<String>,
+        #[flag(short = 'a')]
+        attached: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn short_value_placement_is_enforced() {
+        assert_eq!(
+            ShortPlacement::parse(&["-svalue"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("-svalue".to_owned())
+        );
+        assert_eq!(
+            ShortPlacement::parse(&["-a", "value"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-a".to_owned())
+        );
+        assert_eq!(
+            ShortPlacement::parse(&["-s", "one", "-atwo"])
+                .map(|command| (command.separated, command.attached)),
+            Ok((Some("one".to_owned()), Some("two".to_owned())))
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "legacy-context",
+        style = "gnu",
+        tag(optional_any_next_values = "context=3"),
+        tag(prefixed_values = "unified")
+    )]
+    struct LegacyContext {
+        #[flag(short = 'C')]
+        context: Option<String>,
+        #[flag(short = 'u')]
+        unified: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn optional_any_next_and_prefixed_values_preserve_legacy_forms() {
+        let defaulted = LegacyContext::parse(&["-C"]).unwrap();
+        assert_eq!(defaulted.context.as_deref(), Some("3"));
+
+        let consumed = LegacyContext::parse(&["-C", "-x", "file"]).unwrap();
+        assert_eq!(consumed.context.as_deref(), Some("-x"));
+        assert_eq!(&*consumed.files, &["file"]);
+
+        let prefixed = LegacyContext::parse(&["-0u", "file"]).unwrap();
+        assert_eq!(prefixed.unified.as_deref(), Some("0"));
+        assert_eq!(&*prefixed.files, &["file"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[expect(clippy::struct_excessive_bools, reason = "exclusive flag fixture")]
+    #[command(
+        name = "output-style",
+        style = "gnu",
+        tag(exclusive_flags = "normal;unified,context;side")
+    )]
+    struct OutputStyle {
+        #[flag(long = "normal")]
+        normal: bool,
+        #[flag(long = "unified")]
+        unified: bool,
+        #[flag(long = "context")]
+        context: bool,
+        #[flag(long = "side")]
+        side: bool,
+    }
+
+    #[test]
+    fn exclusive_groups_reject_only_cross_group_combinations() {
+        assert_eq!(
+            OutputStyle::parse(&["--unified", "--context"]).map(|_| ()),
+            Ok(())
+        );
+        assert_eq!(
+            OutputStyle::parse(&["--unified", "--side"]).unwrap_err(),
+            ecmd::error::Error::ConflictingFlags {
+                current: "--side".to_owned(),
+                previous: "--unified".to_owned(),
+            }
+        );
+    }
 }

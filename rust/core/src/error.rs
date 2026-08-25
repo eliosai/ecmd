@@ -82,7 +82,7 @@ impl fmt::Display for Error {
             }
             Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
             Self::ConflictingFlags { current, previous } => {
-                write!(f, "{current}: conflicts with {previous}")
+                write!(f, "{current} conflicts with {previous}")
             }
             Self::FirstNumericValue {
                 option,
@@ -146,6 +146,29 @@ mod tests {
             error.to_string(),
             "--verbose: option cannot be used multiple times"
         );
+    }
+
+    #[test]
+    fn unexpected_value_retains_the_flag_and_value() {
+        let error = Error::UnexpectedValue {
+            flag: "--help".into(),
+            value: "yes".into(),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "--help: option doesn't allow an argument"
+        );
+    }
+
+    #[test]
+    fn conflict_retains_both_occurrences() {
+        let error = Error::ConflictingFlags {
+            current: "--brief".into(),
+            previous: "--verbose".into(),
+        };
+
+        assert_eq!(error.to_string(), "--brief conflicts with --verbose");
     }
 
     #[test]

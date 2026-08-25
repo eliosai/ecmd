@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, Ident};
 
@@ -32,8 +32,9 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     validate(&fields)?;
     let name = &input.ident;
 
-    let meta_body = gen_meta(&cmd, &sections, &fields);
-    let parse_body = gen_parse(&cmd, &fields);
+    let policy = gen_policy(&cmd, &fields)?;
+    let meta_body = gen_meta(&cmd, &sections, &fields, &policy);
+    let parse_body = gen_parse(&fields);
 
     Ok(quote! {
         impl ::ecmd::meta::Command for #name {
@@ -175,24 +176,14 @@ fn check_clears_targets(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
 
 // ── Parse codegen ───────────────────────────────────────────────
 
-fn gen_parse(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let on_unknown = if cmd.lenient {
-        quote! { ::ecmd::parse::OnUnknown::PassThrough }
-    } else {
-        quote! { ::ecmd::parse::OnUnknown::Reject }
-    };
-
-    let flag_defs = gen_flag_defs(cmd, fields);
+fn gen_parse(fields: &[ClassifiedField<'_>]) -> TokenStream {
     let inits = gen_inits(fields);
     let dispatch = gen_dispatch(fields);
     let positionals = gen_positionals(fields);
     let names: Vec<_> = fields.iter().map(|cf| cf.ident).collect();
-    let style = style_tokens(cmd);
-    let permute = !cmd.no_permute;
 
     quote! {
-        static FLAGS: &[::ecmd::parse::FlagDef] = &[#flag_defs];
-        let result = ::ecmd::parse::scan(args, FLAGS, #on_unknown, #style, #permute)?;
+        let result = Self::def().scan(args)?;
         if let Some(flag) = result.unimplemented.first() {
             return Err(::ecmd::error::Error::UnimplementedFlag(flag.clone()));
         }
@@ -212,254 +203,15 @@ fn gen_parse(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream 
     }
 }
 
-fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let mut defs: Vec<TokenStream> = Vec::new();
-
-    for cf in fields {
-        if let Some(literal) = flag_def_literal(cf, fields, cmd) {
-            defs.push(literal);
-        }
-    }
-
-    for ch in cmd.noop.chars() {
-        defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true, possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[] }
-        });
-    }
-    append_exact_long_marker(cmd, &mut defs);
-    append_no_implicit_version_marker(cmd, &mut defs);
-    append_equals_only_markers(cmd, &mut defs);
-    append_optional_value_markers(cmd, fields, &mut defs);
-    append_optional_next_value_markers(cmd, fields, &mut defs);
-    append_optional_numeric_next_value_markers(cmd, fields, &mut defs);
-    append_value_markers(
-        cmd,
-        fields,
-        &mut defs,
-        "numeric_next_values",
-        "numeric-next-value",
-    );
-    append_value_markers(
-        cmd,
-        fields,
-        &mut defs,
-        "exact_short_defaults",
-        "exact-short-default",
-    );
-    append_optional_any_next_value_markers(cmd, fields, &mut defs);
-    append_numeric_operand_markers(cmd, fields, &mut defs);
-    append_field_group_marker(cmd, fields, &mut defs, "prefixed_values", "prefixed-values");
-    append_field_group_marker(cmd, fields, &mut defs, "attached_values", "attached-values");
-    append_field_group_marker(
-        cmd,
-        fields,
-        &mut defs,
-        "separated_values",
-        "separated-values",
-    );
-    append_field_group_marker(
-        cmd,
-        fields,
-        &mut defs,
-        "first_numeric_value",
-        "first-numeric-value",
-    );
-    append_field_group_marker(cmd, fields, &mut defs, "exclusive_flags", "exclusive-flags");
-
-    quote! { #(#defs),* }
-}
-
-fn append_numeric_operand_markers(
-    cmd: &CommandAttrs,
-    fields: &[ClassifiedField<'_>],
-    defs: &mut Vec<TokenStream>,
-) {
-    append_value_markers(cmd, fields, defs, "numeric_operands", "numeric-operand");
-}
-
-fn append_optional_any_next_value_markers(
-    cmd: &CommandAttrs,
-    fields: &[ClassifiedField<'_>],
-    defs: &mut Vec<TokenStream>,
-) {
-    append_value_markers(
-        cmd,
-        fields,
-        defs,
-        "optional_any_next_values",
-        "optional-any-next-value",
-    );
-}
-
-fn append_field_group_marker(
-    cmd: &CommandAttrs,
-    fields: &[ClassifiedField<'_>],
-    defs: &mut Vec<TokenStream>,
-    key_name: &str,
-    marker_name: &str,
-) {
-    for value in cmd
-        .tags
-        .iter()
-        .filter_map(|(key, value)| (key == key_name).then_some(value))
-    {
-        let chars = marker_field_groups(value, fields);
-        let marker = format!("\0{marker_name}:{chars}");
+fn append_version_opt_out(defs: &mut Vec<TokenStream>, cmd: &CommandAttrs) {
+    if cmd.no_implicit_version {
         defs.push(quote! {
             ::ecmd::parse::FlagDef {
-                ch: '\0', long: #marker, aliases: &[],
-                kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
-                value_name: "", hidden: true, implemented: true,
-                repeatable: false, allow_hyphen_values: true,
-                possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
+                ch: 'V', hidden: true,
+                ..::ecmd::parse::FlagDef::EMPTY
             }
         });
     }
-}
-
-fn marker_field_groups(value: &str, fields: &[ClassifiedField<'_>]) -> String {
-    value
-        .split(';')
-        .map(|group| {
-            group
-                .split(',')
-                .map(str::trim)
-                .filter_map(|name| fields.iter().find(|field| field.ident == name))
-                .filter_map(|field| flag_char(&field.role))
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("|")
-}
-
-fn append_optional_next_value_markers(
-    cmd: &CommandAttrs,
-    fields: &[ClassifiedField<'_>],
-    defs: &mut Vec<TokenStream>,
-) {
-    append_value_markers(
-        cmd,
-        fields,
-        defs,
-        "optional_next_values",
-        "optional-next-value",
-    );
-}
-
-fn append_optional_numeric_next_value_markers(
-    cmd: &CommandAttrs,
-    fields: &[ClassifiedField<'_>],
-    defs: &mut Vec<TokenStream>,
-) {
-    append_value_markers(
-        cmd,
-        fields,
-        defs,
-        "optional_numeric_next_values",
-        "optional-numeric-next-value",
-    );
-}
-
-fn append_optional_value_markers(
-    cmd: &CommandAttrs,
-    fields: &[ClassifiedField<'_>],
-    defs: &mut Vec<TokenStream>,
-) {
-    append_value_markers(cmd, fields, defs, "optional_values", "optional-value");
-}
-
-fn append_value_markers(
-    cmd: &CommandAttrs,
-    fields: &[ClassifiedField<'_>],
-    defs: &mut Vec<TokenStream>,
-    key_name: &str,
-    marker_name: &str,
-) {
-    for value in cmd
-        .tags
-        .iter()
-        .filter_map(|(key, value)| (key == key_name).then_some(value))
-    {
-        for entry in value
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-        {
-            let (field, default) = entry.split_once('=').unwrap_or((entry, ""));
-            let Some(ch) = fields
-                .iter()
-                .find(|candidate| candidate.ident == field)
-                .map(|candidate| candidate.id)
-            else {
-                continue;
-            };
-            let marker = format!("\0{marker_name}:{ch}:{default}");
-            defs.push(quote! {
-                ::ecmd::parse::FlagDef {
-                    ch: '\0', long: #marker, aliases: &[],
-                    kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
-                    value_name: "", hidden: true, implemented: true,
-                    repeatable: false, allow_hyphen_values: true,
-                    possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
-                }
-            });
-        }
-    }
-}
-
-fn append_equals_only_markers(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
-    for value in cmd
-        .tags
-        .iter()
-        .filter_map(|(key, value)| (key == "equals_only").then_some(value))
-    {
-        for name in value
-            .split(',')
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            let marker = format!("\0equals-only:{name}");
-            defs.push(quote! {
-                ::ecmd::parse::FlagDef {
-                    ch: '\0', long: #marker, aliases: &[],
-                    kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
-                    value_name: "", hidden: true, implemented: true,
-                    repeatable: false, allow_hyphen_values: true,
-                    possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
-                }
-            });
-        }
-    }
-}
-
-fn append_exact_long_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
-    if !cmd.tags.iter().any(|(key, _)| key == "exact_long") {
-        return;
-    }
-    defs.push(quote! {
-        ::ecmd::parse::FlagDef {
-            ch: '\0', long: "\0exact-long", aliases: &[],
-            kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
-            value_name: "", hidden: true, implemented: true,
-            repeatable: false, allow_hyphen_values: true,
-            possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
-        }
-    });
-}
-
-fn append_no_implicit_version_marker(cmd: &CommandAttrs, defs: &mut Vec<TokenStream>) {
-    if !cmd.no_implicit_version {
-        return;
-    }
-    defs.push(quote! {
-        ::ecmd::parse::FlagDef {
-            ch: '\0', long: "\0no-implicit-version", aliases: &[],
-            kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "",
-            value_name: "", hidden: true, implemented: true,
-            repeatable: false, allow_hyphen_values: true,
-            possible_values: &[], help_values: &[], default_value: "", help_label: "", visible_aliases: &[]
-        }
-    });
 }
 
 fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
@@ -620,12 +372,286 @@ fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenStream
     }
 }
 
+// ── Parse policy codegen ────────────────────────────────────────
+
+struct ValuePolicyLiteral {
+    ch: char,
+    mode: TokenStream,
+    default: String,
+}
+
+struct PolicyTokens {
+    values: TokenStream,
+    numeric_operands: TokenStream,
+    first_numeric: TokenStream,
+    exact_long: bool,
+    equals_only: TokenStream,
+    attached_values: TokenStream,
+    separated_values: TokenStream,
+    prefixed_values: TokenStream,
+    exclusive_groups: TokenStream,
+}
+
+fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result<PolicyTokens> {
+    let mut values = Vec::new();
+    let mut numeric_operands = Vec::new();
+    let mut first_numeric = None;
+    let mut equals_only = Vec::new();
+    let mut attached_values = Vec::new();
+    let mut separated_values = Vec::new();
+    let mut prefixed_values = Vec::new();
+    let mut exclusive_groups = Vec::new();
+    let mut seen_values = HashSet::new();
+    let exact_long = cmd.tags.iter().any(|(key, _)| key == "exact_long");
+    for (key, value) in &cmd.tags {
+        let mode = match key.as_str() {
+            "optional_values" => Some(quote! { ::ecmd::policy::ValueMode::AttachedOrDefault }),
+            "optional_next_values" => Some(quote! { ::ecmd::policy::ValueMode::NextOrDefault }),
+            "numeric_next_values" => {
+                Some(quote! { ::ecmd::policy::ValueMode::NumericNextOrDefault })
+            }
+            "optional_numeric_next_values" => {
+                Some(quote! { ::ecmd::policy::ValueMode::OptionalNumericNextOrDefault })
+            }
+            "exact_short_defaults" => Some(quote! { ::ecmd::policy::ValueMode::ExactShortDefault }),
+            "optional_any_next_values" => {
+                Some(quote! { ::ecmd::policy::ValueMode::AnyNextOrDefault })
+            }
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            append_value_rules(value, &mode, fields, &mut values, &mut seen_values)?;
+        } else if key == "numeric_operands" {
+            append_numeric_operands(value, fields, &mut numeric_operands)?;
+        } else if key == "first_numeric_value" {
+            first_numeric = Some(policy_field(fields, value)?.id);
+        } else if key == "equals_only" {
+            append_flag_identities(value, fields, &mut equals_only)?;
+        } else if key == "attached_values" {
+            append_flag_identities(value, fields, &mut attached_values)?;
+        } else if key == "separated_values" {
+            append_flag_identities(value, fields, &mut separated_values)?;
+        } else if key == "prefixed_values" {
+            append_flag_identities(value, fields, &mut prefixed_values)?;
+        } else if key == "exclusive_flags" {
+            append_exclusive_groups(value, fields, &mut exclusive_groups)?;
+        }
+    }
+    Ok(policy_literal(&PolicySpec {
+        values: &values,
+        numeric_operands: &numeric_operands,
+        first_numeric,
+        exact_long,
+        equals_only: &equals_only,
+        attached_values: &attached_values,
+        separated_values: &separated_values,
+        prefixed_values: &prefixed_values,
+        exclusive_groups: &exclusive_groups,
+    }))
+}
+
+fn append_flag_identities(
+    raw: &str,
+    fields: &[ClassifiedField<'_>],
+    identities: &mut Vec<char>,
+) -> syn::Result<()> {
+    for name in raw.split(',').filter(|name| !name.is_empty()) {
+        let identity = policy_field(fields, name.trim())?.id;
+        if !identities.contains(&identity) {
+            identities.push(identity);
+        }
+    }
+    Ok(())
+}
+
+fn append_exclusive_groups(
+    raw: &str,
+    fields: &[ClassifiedField<'_>],
+    rules: &mut Vec<(char, u16)>,
+) -> syn::Result<()> {
+    let offset = rules
+        .iter()
+        .map(|(_, group)| *group)
+        .max()
+        .map_or(0, |group| group.saturating_add(1));
+    for (group, alternatives) in raw.split(';').enumerate() {
+        let group = u16::try_from(group)
+            .map_err(|_error| syn::Error::new(Span::call_site(), "too many exclusive groups"))?;
+        let group = offset
+            .checked_add(group)
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "too many exclusive groups"))?;
+        for name in alternatives.split(',').filter(|name| !name.is_empty()) {
+            rules.push((policy_any_field(fields, name.trim())?.id, group));
+        }
+    }
+    Ok(())
+}
+
+fn append_value_rules(
+    raw: &str,
+    mode: &TokenStream,
+    fields: &[ClassifiedField<'_>],
+    values: &mut Vec<ValuePolicyLiteral>,
+    seen: &mut HashSet<char>,
+) -> syn::Result<()> {
+    for entry in raw.split(',').filter(|entry| !entry.is_empty()) {
+        let (name, default) = entry.split_once('=').unwrap_or((entry, ""));
+        let field = policy_field(fields, name.trim())?;
+        if !seen.insert(field.id) {
+            return Err(syn::Error::new_spanned(
+                field.field,
+                "duplicate value policy",
+            ));
+        }
+        values.push(ValuePolicyLiteral {
+            ch: field.id,
+            mode: mode.clone(),
+            default: default.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn append_numeric_operands(
+    raw: &str,
+    fields: &[ClassifiedField<'_>],
+    rules: &mut Vec<(char, char)>,
+) -> syn::Result<()> {
+    for entry in raw.split(',').filter(|entry| !entry.is_empty()) {
+        let Some((name, prefix)) = entry.split_once('=') else {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "numeric operand policy needs field=prefix",
+            ));
+        };
+        let field = policy_field(fields, name.trim())?;
+        let mut chars = prefix.chars();
+        let Some(prefix) = chars.next().filter(|_| chars.next().is_none()) else {
+            return Err(syn::Error::new_spanned(
+                field.field,
+                "numeric operand prefix must be one character",
+            ));
+        };
+        rules.push((field.id, prefix));
+    }
+    Ok(())
+}
+
+fn policy_field<'a, 'field>(
+    fields: &'a [ClassifiedField<'field>],
+    name: &str,
+) -> syn::Result<&'a ClassifiedField<'field>> {
+    let field = policy_any_field(fields, name)?;
+    if matches!(
+        field.role,
+        FieldRole::ValuedFlag(_) | FieldRole::RepeatableValueFlag(_) | FieldRole::PolarValueFlag(_)
+    ) {
+        Ok(field)
+    } else {
+        Err(syn::Error::new_spanned(
+            field.field,
+            "policy field must be a valued flag",
+        ))
+    }
+}
+
+fn policy_any_field<'a, 'field>(
+    fields: &'a [ClassifiedField<'field>],
+    name: &str,
+) -> syn::Result<&'a ClassifiedField<'field>> {
+    let field = if let Some(field) = fields.iter().find(|field| field.ident == name) {
+        field
+    } else {
+        unique_policy_long(fields, name)?
+    };
+    if flag_attrs(&field.role).is_some() {
+        Ok(field)
+    } else {
+        Err(syn::Error::new_spanned(
+            field.field,
+            "policy field must be a flag",
+        ))
+    }
+}
+
+fn unique_policy_long<'a, 'field>(
+    fields: &'a [ClassifiedField<'field>],
+    name: &str,
+) -> syn::Result<&'a ClassifiedField<'field>> {
+    let mut matches = fields.iter().filter(|field| policy_long(field, name));
+    let Some(field) = matches.next() else {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("unknown policy field `{name}`"),
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(syn::Error::new_spanned(
+            field.field,
+            "ambiguous policy field",
+        ));
+    }
+    Ok(field)
+}
+
+fn policy_long(field: &ClassifiedField<'_>, name: &str) -> bool {
+    flag_attrs(&field.role).is_some_and(|attrs| {
+        attrs.long.as_deref() == Some(name) || (attrs.long.is_none() && kebab(field.ident) == name)
+    })
+}
+
+struct PolicySpec<'a> {
+    values: &'a [ValuePolicyLiteral],
+    numeric_operands: &'a [(char, char)],
+    first_numeric: Option<char>,
+    exact_long: bool,
+    equals_only: &'a [char],
+    attached_values: &'a [char],
+    separated_values: &'a [char],
+    prefixed_values: &'a [char],
+    exclusive_groups: &'a [(char, u16)],
+}
+
+fn policy_literal(spec: &PolicySpec<'_>) -> PolicyTokens {
+    let value_rules = spec.values.iter().map(|rule| {
+        let ch = rule.ch;
+        let mode = &rule.mode;
+        let default = &rule.default;
+        quote! { ::ecmd::policy::ValueRule { ch: #ch, mode: #mode, default: #default } }
+    });
+    let numeric_rules = spec.numeric_operands.iter().map(|(ch, prefix)| {
+        quote! { ::ecmd::policy::NumericOperandRule { ch: #ch, prefix: #prefix } }
+    });
+    let first = spec
+        .first_numeric
+        .map_or_else(|| quote! { None }, |ch| quote! { Some(#ch) });
+    let exclusive_rules = spec.exclusive_groups.iter().map(|(ch, group)| {
+        quote! { ::ecmd::policy::ExclusiveRule { ch: #ch, group: #group } }
+    });
+    PolicyTokens {
+        values: quote! { &[#(#value_rules),*] },
+        numeric_operands: quote! { &[#(#numeric_rules),*] },
+        first_numeric: first,
+        exact_long: spec.exact_long,
+        equals_only: identities_literal(spec.equals_only),
+        attached_values: identities_literal(spec.attached_values),
+        separated_values: identities_literal(spec.separated_values),
+        prefixed_values: identities_literal(spec.prefixed_values),
+        exclusive_groups: quote! { &[#(#exclusive_rules),*] },
+    }
+}
+
+fn identities_literal(identities: &[char]) -> TokenStream {
+    quote! { &[#(#identities),*] }
+}
+
 // ── Meta codegen ────────────────────────────────────────────────
 
 fn gen_meta(
     cmd: &CommandAttrs,
     sections: &crate::attrs::DocSections,
     fields: &[ClassifiedField<'_>],
+    policy: &PolicyTokens,
 ) -> TokenStream {
     let name = &cmd.name;
     let about = &sections.about;
@@ -674,6 +700,15 @@ fn gen_meta(
         .map(|(_, _, _, _, default, _)| default.clone())
         .unwrap_or_default();
     let rest_required = rest.as_ref().is_some_and(|(.., required)| *required);
+    let value_rules = &policy.values;
+    let numeric_operands = &policy.numeric_operands;
+    let first_numeric = &policy.first_numeric;
+    let exact_long = policy.exact_long;
+    let equals_only = &policy.equals_only;
+    let attached_values = &policy.attached_values;
+    let separated_values = &policy.separated_values;
+    let prefixed_values = &policy.prefixed_values;
+    let exclusive_groups = &policy.exclusive_groups;
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
     let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
 
@@ -702,6 +737,15 @@ fn gen_meta(
             rest_desc: #rest_desc,
             rest_default: #rest_default,
             rest_required: #rest_required,
+            value_rules: #value_rules,
+            numeric_operands: #numeric_operands,
+            first_numeric_value: #first_numeric,
+            exact_long: #exact_long,
+            equals_only: #equals_only,
+            attached_values: #attached_values,
+            separated_values: #separated_values,
+            prefixed_values: #prefixed_values,
+            exclusive_groups: #exclusive_groups,
             tags: &[#( (#tag_keys, #tag_vals) ),*],
             description: &[#( #desc_lines ),*],
             extra: &[#( #extra_lines ),*],
@@ -711,7 +755,21 @@ fn gen_meta(
 }
 
 fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
-    gen_flag_defs(cmd, fields)
+    let mut defs: Vec<_> = fields
+        .iter()
+        .filter_map(|cf| flag_def_literal(cf, fields, cmd))
+        .collect();
+    for ch in cmd.noop.chars() {
+        defs.push(quote! {
+            ::ecmd::parse::FlagDef {
+                ch: #ch, kind: ::ecmd::parse::FlagKind::Noop,
+                implemented: true, allow_hyphen_values: true,
+                ..::ecmd::parse::FlagDef::EMPTY
+            }
+        });
+    }
+    append_version_opt_out(&mut defs, cmd);
+    quote! { #(#defs),* }
 }
 
 /// One `FlagDef { … }` literal for a flag field, shared by parse and meta codegen.

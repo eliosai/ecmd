@@ -4,8 +4,9 @@
 //! separated values (`-o val`), `--` terminator, and `+` polarity.
 
 use crate::error::Error;
-use crate::meta::{Owned, Static, Storage};
+use crate::meta::{CommandDef, Owned, Static, Storage};
 use crate::polarity::Polarity;
+use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
 use crate::style::Style;
 
 // ── Public types ────────────────────────────────────────────────
@@ -189,6 +190,35 @@ pub fn scan<S: Storage>(
     style: Style,
     permute: bool,
 ) -> Result<ScanResult, Error> {
+    scan_with_policy(
+        args,
+        flags,
+        Policy::<Static>::STANDARD,
+        on_unknown,
+        style,
+        permute,
+    )
+}
+
+/// Parse arguments with command-specific value and numeric policies.
+///
+/// # Errors
+///
+/// Returns an error if the invocation violates the declared command shape.
+pub(crate) fn scan_with_policy<S: Storage, P: Storage>(
+    args: &[&str],
+    flags: &[FlagDef<S>],
+    policy: Policy<'_, P>,
+    on_unknown: OnUnknown,
+    style: Style,
+    permute: bool,
+) -> Result<ScanResult, Error> {
+    let config = ScanConfig {
+        flags,
+        policy,
+        on_unknown,
+        style,
+    };
     let mut result = ScanResult {
         flags: Vec::new(),
         operands: Vec::new(),
@@ -199,17 +229,20 @@ pub fn scan<S: Storage>(
     let mut cursor = Cursor::new(args);
 
     while let Some(arg) = cursor.peek() {
+        if process_first_numeric(arg, &mut cursor, &config, &mut result)? {
+            continue;
+        }
+        if process_numeric_operand(arg, &mut cursor, &config, &mut result)? {
+            continue;
+        }
         if arg == "--" {
             cursor.advance();
             break;
         }
-        if try_numeric_operand(arg, &mut cursor, flags, &mut result) {
-            continue;
-        }
         if gnu && is_long(arg) {
             let operand_count = result.operands.len();
             let spec = arg.strip_prefix("--").unwrap_or_default();
-            if let Err(error) = process_long(spec, &mut cursor, flags, &mut result) {
+            if let Err(error) = process_long(spec, &mut cursor, &config, &mut result) {
                 pass_unknown_long(error, arg, on_unknown, &mut result.operands)?;
             }
             if !permute && result.operands.len() > operand_count {
@@ -220,15 +253,7 @@ pub fn scan<S: Storage>(
         match classify(arg, has_polarity) {
             ArgClass::Flags(polarity, chars) => {
                 let operand_count = result.operands.len();
-                process_cluster(
-                    chars,
-                    polarity,
-                    &mut cursor,
-                    flags,
-                    on_unknown,
-                    style,
-                    &mut result,
-                )?;
+                process_cluster(chars, polarity, &mut cursor, &config, &mut result)?;
                 if !permute && result.operands.len() > operand_count {
                     break;
                 }
@@ -254,48 +279,6 @@ pub fn scan<S: Storage>(
     Ok(result)
 }
 
-fn try_numeric_operand<S: Storage>(
-    arg: &str,
-    cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    result: &mut ScanResult,
-) -> bool {
-    let Some((target, value)) = numeric_operand_match(arg, flags) else {
-        return false;
-    };
-    if !result
-        .flags
-        .iter()
-        .any(|parsed| parsed_char(parsed) == target)
-    {
-        result.flags.push(Parsed::Value(target, value.to_owned()));
-    }
-    cursor.advance();
-    true
-}
-
-fn numeric_operand_match<'a, S: Storage>(
-    arg: &'a str,
-    flags: &[FlagDef<S>],
-) -> Option<(char, &'a str)> {
-    flags.iter().find_map(|flag| {
-        let marker = flag.long.as_ref().strip_prefix("\0numeric-operand:")?;
-        let (target, prefix) = marker.split_once(':')?;
-        let target = target.chars().next()?;
-        numeric_operand_value(arg, prefix).map(|value| (target, value))
-    })
-}
-
-fn numeric_operand_value<'a>(arg: &'a str, prefix: &str) -> Option<&'a str> {
-    let value = arg.strip_prefix(prefix)?;
-    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
-    match value.split_once(':') {
-        Some((first, last)) if digits(first) && digits(last) => Some(value),
-        None if digits(value) => Some(value),
-        _ => None,
-    }
-}
-
 fn pass_unknown_long(
     error: Error,
     arg: &str,
@@ -307,6 +290,172 @@ fn pass_unknown_long(
         Ok(())
     } else {
         Err(error)
+    }
+}
+
+pub(crate) struct Policy<'a, S: Storage> {
+    value_rules: &'a [ValueRule<S>],
+    numeric_operands: &'a [NumericOperandRule],
+    first_numeric_value: Option<char>,
+    exact_long: bool,
+    equals_only: &'a [char],
+    attached_values: &'a [char],
+    separated_values: &'a [char],
+    prefixed_values: &'a [char],
+    exclusive_groups: &'a [ExclusiveRule],
+}
+
+impl<S: Storage> Policy<'_, S> {
+    const STANDARD: Policy<'static, Static> = Policy {
+        value_rules: &[],
+        numeric_operands: &[],
+        first_numeric_value: None,
+        exact_long: false,
+        equals_only: &[],
+        attached_values: &[],
+        separated_values: &[],
+        prefixed_values: &[],
+        exclusive_groups: &[],
+    };
+
+    pub(crate) fn from_definition(definition: &CommandDef<S>) -> Policy<'_, S> {
+        Policy {
+            value_rules: definition.value_rules.as_ref(),
+            numeric_operands: definition.numeric_operands.as_ref(),
+            first_numeric_value: definition.first_numeric_value,
+            exact_long: definition.exact_long,
+            equals_only: definition.equals_only.as_ref(),
+            attached_values: definition.attached_values.as_ref(),
+            separated_values: definition.separated_values.as_ref(),
+            prefixed_values: definition.prefixed_values.as_ref(),
+            exclusive_groups: definition.exclusive_groups.as_ref(),
+        }
+    }
+
+    fn value(&self, ch: char) -> Option<&ValueRule<S>> {
+        self.value_rules.iter().find(|rule| rule.ch == ch)
+    }
+
+    fn requires_equals(&self, ch: char) -> bool {
+        self.equals_only.contains(&ch)
+    }
+
+    fn requires_attached(&self, ch: char) -> bool {
+        self.attached_values.contains(&ch)
+    }
+
+    fn requires_separated(&self, ch: char) -> bool {
+        self.separated_values.contains(&ch)
+    }
+
+    fn accepts_prefix(&self, ch: char) -> bool {
+        self.prefixed_values.contains(&ch)
+    }
+
+    fn exclusive_group(&self, ch: char) -> Option<u16> {
+        self.exclusive_groups
+            .iter()
+            .find_map(|rule| (rule.ch == ch).then_some(rule.group))
+    }
+}
+
+struct ScanConfig<'a, S: Storage, P: Storage> {
+    flags: &'a [FlagDef<S>],
+    policy: Policy<'a, P>,
+    on_unknown: OnUnknown,
+    style: Style,
+}
+
+fn process_first_numeric<S: Storage, P: Storage>(
+    arg: &str,
+    cursor: &mut Cursor<'_>,
+    config: &ScanConfig<'_, S, P>,
+    result: &mut ScanResult,
+) -> Result<bool, Error> {
+    let Some(ch) = config.policy.first_numeric_value else {
+        return Ok(false);
+    };
+    let Some(value) = first_numeric_value(arg) else {
+        return Ok(false);
+    };
+    let Some(def) = find_flag(ch, config.flags) else {
+        return Ok(false);
+    };
+    if first_numeric_is_operand(value) {
+        result.operands.push(arg.to_owned());
+    } else if !cursor.at_start() {
+        let option = value.chars().next().unwrap_or_default();
+        return Err(Error::FirstNumericValue {
+            option,
+            flag: ch,
+            value_name: def.value_name.as_ref().to_owned(),
+        });
+    } else {
+        record_unimplemented(def, arg, result);
+        reject_repeat(def, result, arg, config.style)?;
+        result.flags.push(Parsed::Value(ch, value.to_owned()));
+        reject_latest_conflict(result, config, arg)?;
+    }
+    cursor.advance();
+    Ok(true)
+}
+
+fn first_numeric_value(arg: &str) -> Option<&str> {
+    arg.strip_prefix('-')
+        .filter(|value| value.as_bytes().first().is_some_and(u8::is_ascii_digit))
+}
+
+fn first_numeric_is_operand(value: &str) -> bool {
+    value.bytes().all(|byte| byte == b'0')
+        || (is_unsigned(value) && value.parse::<usize>().is_err())
+}
+
+fn process_numeric_operand<S: Storage, P: Storage>(
+    arg: &str,
+    cursor: &mut Cursor<'_>,
+    config: &ScanConfig<'_, S, P>,
+    result: &mut ScanResult,
+) -> Result<bool, Error> {
+    let Some((rule, value)) = config.policy.numeric_operands.iter().find_map(|rule| {
+        arg.strip_prefix(rule.prefix)
+            .filter(|value| is_numeric_range(value))
+            .map(|value| (rule, value))
+    }) else {
+        return Ok(false);
+    };
+    let Some(def) = find_flag(rule.ch, config.flags) else {
+        return Ok(false);
+    };
+    if result
+        .flags
+        .iter()
+        .any(|parsed| parsed_char(parsed) == rule.ch)
+    {
+        cursor.advance();
+        return Ok(true);
+    }
+    record_unimplemented(def, arg, result);
+    reject_repeat(def, result, arg, config.style)?;
+    result.flags.push(Parsed::Value(rule.ch, value.to_owned()));
+    reject_latest_conflict(result, config, arg)?;
+    cursor.advance();
+    Ok(true)
+}
+
+fn is_numeric_range(value: &str) -> bool {
+    let Some((first, last)) = value.split_once(':') else {
+        return is_unsigned(value);
+    };
+    is_unsigned(first) && is_unsigned(last) && !last.contains(':')
+}
+
+fn is_unsigned(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn record_unimplemented<S: Storage>(def: &FlagDef<S>, label: &str, result: &mut ScanResult) {
+    if !def.implemented {
+        result.unimplemented.push(label.to_owned());
     }
 }
 
@@ -329,6 +478,10 @@ impl<'a> Cursor<'a> {
 
     fn peek(&self) -> Option<&'a str> {
         self.args.get(self.pos).copied()
+    }
+
+    const fn at_start(&self) -> bool {
+        self.pos == 0
     }
 
     const fn advance(&mut self) {
@@ -390,116 +543,63 @@ fn find_flag<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<&FlagDef<S>> 
 
 // ── Cluster processing ──────────────────────────────────────────
 
-fn process_cluster<S: Storage>(
+fn process_cluster<S: Storage, P: Storage>(
     chars: &str,
     polarity: Polarity,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    on_unknown: OnUnknown,
-    style: Style,
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
-    if try_first_numeric_value(chars, polarity, cursor, flags, style, result)? {
+    if process_prefixed_value(chars, polarity, cursor, config, result)? {
         return Ok(());
     }
-    if try_prefixed_value(chars, polarity, cursor, flags, style, result)? {
+    if try_passthrough(chars, cursor, config, &mut result.operands) {
         return Ok(());
     }
-    if try_passthrough(
-        chars,
-        cursor,
-        flags,
-        on_unknown,
-        style,
-        &mut result.operands,
-    ) {
-        return Ok(());
-    }
-    parse_known_cluster(chars, polarity, cursor, flags, style, result)
+    parse_known_cluster(chars, polarity, cursor, config, result)
 }
 
-fn try_first_numeric_value<S: Storage>(
+fn process_prefixed_value<S: Storage, P: Storage>(
     chars: &str,
     polarity: Polarity,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    style: Style,
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<bool, Error> {
-    let Some(option) = chars.chars().next().filter(char::is_ascii_digit) else {
+    let Some((last, prefix)) = chars.as_bytes().split_last() else {
         return Ok(false);
     };
-    let Some(target) = marker_chars(flags, "first-numeric-value").chars().next() else {
-        return Ok(false);
-    };
-    let Some(def) = find_flag(target, flags).filter(|_| polarity == Polarity::On) else {
-        return Ok(false);
-    };
-    let obsolete = format!("-{chars}");
-    if chars.chars().all(|ch| ch.is_ascii_digit())
-        && !obsolete.parse::<isize>().is_ok_and(|value| value < 0)
-    {
-        result.operands.push(obsolete);
-        cursor.advance();
-        return Ok(true);
-    }
-    if cursor.pos != 0 {
-        return Err(Error::FirstNumericValue {
-            option,
-            flag: target,
-            value_name: def.value_name.as_ref().to_owned(),
-        });
-    }
-    reject_repeat(def, result, &format!("-{target}"), style)?;
-    result.flags.push(Parsed::Value(target, chars.to_owned()));
-    cursor.advance();
-    Ok(true)
-}
-
-fn try_prefixed_value<S: Storage>(
-    chars: &str,
-    polarity: Polarity,
-    cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    style: Style,
-    result: &mut ScanResult,
-) -> Result<bool, Error> {
-    let Some((value, ch)) = chars.split_at_checked(chars.len().saturating_sub(1)) else {
-        return Ok(false);
-    };
-    let Some(ch) = ch.chars().next() else {
-        return Ok(false);
-    };
+    let ch = char::from(*last);
     if polarity != Polarity::On
-        || value.is_empty()
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
-        || !marker_chars(flags, "prefixed-values").contains(ch)
+        || prefix.is_empty()
+        || !prefix.iter().all(u8::is_ascii_digit)
+        || !config.policy.accepts_prefix(ch)
     {
         return Ok(false);
     }
-    let Some(def) = find_flag(ch, flags) else {
+    let Some(def) = find_flag(ch, config.flags) else {
         return Ok(false);
     };
-    let label = format!("-{ch}");
-    reject_conflict(ch, &label, flags, result)?;
-    reject_repeat(def, result, &label, style)?;
-    result.flags.push(Parsed::Value(ch, value.to_owned()));
+    let value = prefix.iter().copied().map(char::from).collect();
+    let label = format!("-{chars}");
+    record_unimplemented(def, &label, result);
+    reject_repeat(def, result, &label, config.style)?;
+    result.flags.push(Parsed::Value(ch, value));
+    reject_latest_conflict(result, config, &label)?;
     cursor.advance();
     Ok(true)
 }
 
-fn try_passthrough<S: Storage>(
+fn try_passthrough<S: Storage, P: Storage>(
     chars: &str,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    on_unknown: OnUnknown,
-    style: Style,
+    config: &ScanConfig<'_, S, P>,
     operands: &mut Vec<String>,
 ) -> bool {
-    if on_unknown != OnUnknown::PassThrough {
+    if config.on_unknown != OnUnknown::PassThrough {
         return false;
     }
-    if !has_unknown_flag(chars, flags, style) {
+    if !has_unknown_flag(chars, config) {
         return false;
     }
     if let Some(full_arg) = cursor.peek() {
@@ -509,14 +609,13 @@ fn try_passthrough<S: Storage>(
     true
 }
 
-fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style) -> bool {
+fn has_unknown_flag<S: Storage, P: Storage>(chars: &str, config: &ScanConfig<'_, S, P>) -> bool {
     for (index, &b) in chars.as_bytes().iter().enumerate() {
-        match find_flag(char::from(b), flags) {
-            None if implicit_short_action(char::from(b), style, flags).is_some() => {}
+        match find_flag(char::from(b), config.flags) {
+            None if implicit_short_action(char::from(b), config.style, config.flags).is_some() => {}
             None => return true,
             Some(def) if matches!(def.kind, FlagKind::Value | FlagKind::PolarValue) => {
-                if index + 1 < chars.len()
-                    && marker_chars(flags, "separated-values").contains(def.ch)
+                if index.saturating_add(1) < chars.len() && config.policy.requires_separated(def.ch)
                 {
                     return true;
                 }
@@ -528,46 +627,42 @@ fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style)
     false
 }
 
-fn parse_known_cluster<S: Storage>(
+fn parse_known_cluster<S: Storage, P: Storage>(
     chars: &str,
     polarity: Polarity,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    style: Style,
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     for (bi, &byte) in chars.as_bytes().iter().enumerate() {
         let ch = char::from(byte);
-        let Some(def) = find_flag(ch, flags) else {
-            return Err(implicit_short_action(ch, style, flags)
+        let Some(def) = find_flag(ch, config.flags) else {
+            return Err(implicit_short_action(ch, config.style, config.flags)
                 .unwrap_or_else(|| Error::UnknownFlag(format!("-{ch}"))));
         };
         if !def.implemented {
             result.unimplemented.push(format!("-{ch}"));
         }
-        reject_conflict(ch, &format!("-{ch}"), flags, result)?;
         match def.kind {
-            FlagKind::Bool => {
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
+            FlagKind::Bool | FlagKind::Noop => {
+                reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 result.flags.push(Parsed::Bool(ch));
-            }
-            FlagKind::Noop => {
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
-                result.flags.push(Parsed::Bool(ch));
+                reject_latest_conflict(result, config, &format!("-{ch}"))?;
             }
             FlagKind::Polar => {
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
+                reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 result.flags.push(Parsed::Polar(ch, polarity));
+                reject_latest_conflict(result, config, &format!("-{ch}"))?;
             }
             FlagKind::Value | FlagKind::PolarValue => {
-                let value = extract_value(chars, bi, cursor, ch, def, flags)?;
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
+                let value = extract_value(chars, bi, cursor, ch, def, config)?;
+                reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 let parsed = match def.kind {
                     FlagKind::Value => Parsed::Value(ch, value),
-                    FlagKind::PolarValue => Parsed::PolarValue(ch, polarity, value),
                     _ => Parsed::PolarValue(ch, polarity, value),
                 };
                 result.flags.push(parsed);
+                reject_latest_conflict(result, config, &format!("-{ch}"))?;
                 return Ok(());
             }
         }
@@ -591,73 +686,151 @@ fn implicit_short_action<S: Storage>(
     }
 }
 
-/// Whether the command opted out of the implicit GNU `-V` reservation.
 fn no_implicit_version<S: Storage>(flags: &[FlagDef<S>]) -> bool {
     flags
         .iter()
         .any(|flag| flag.hidden && flag.long.as_ref() == "\0no-implicit-version")
 }
 
-fn extract_value<S: Storage>(
+fn extract_value<S: Storage, P: Storage>(
     chars: &str,
     byte_pos: usize,
     cursor: &mut Cursor<'_>,
     flag_ch: char,
     def: &FlagDef<S>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
 ) -> Result<String, Error> {
     let after = byte_pos.saturating_add(1);
     let remainder = chars.get(after..).unwrap_or_default();
     if !remainder.is_empty() {
-        if marker_chars(flags, "separated-values").contains(flag_ch) {
+        if config.policy.requires_separated(flag_ch) {
             return Err(Error::UnknownFlag(format!("-{chars}")));
         }
         cursor.advance();
         // clap parity: a single leading `=` is the attached-value separator (`-c=5` → `5`).
         return Ok(remainder.strip_prefix('=').unwrap_or(remainder).to_owned());
     }
-    if marker_chars(flags, "attached-values").contains(flag_ch) {
-        cursor.advance();
-        return Err(Error::MissingValue(format!("-{flag_ch}")));
+    let label = format!("-{flag_ch}");
+    if config.policy.requires_attached(flag_ch) {
+        return Err(Error::MissingValue(label));
     }
-    if let Some(default) = exact_short_default(flag_ch, flags)
-        && byte_pos == 0
+    if let Some(rule) = config.policy.value(flag_ch) {
+        return apply_short_value_rule(rule, cursor, config.flags, &label, chars.len() == 1);
+    }
+    reject_option_value(
+        cursor.following(),
+        def,
+        config.flags,
+        config.policy.exact_long,
+        &label,
+    )?;
+    cursor.next_value(flag_ch)
+}
+
+fn apply_short_value_rule<S: Storage, P: Storage>(
+    rule: &crate::policy::ValueRule<P>,
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    label: &str,
+    exact: bool,
+) -> Result<String, Error> {
+    match rule.mode {
+        ValueMode::AttachedOrDefault => Ok(advance_with_default(cursor, rule.default.as_ref())),
+        ValueMode::NextOrDefault => Ok(take_next_or_default(cursor, flags, rule.default.as_ref())),
+        ValueMode::NumericNextOrDefault => {
+            take_numeric_next_or_default(cursor, rule.default.as_ref(), label)
+        }
+        ValueMode::OptionalNumericNextOrDefault => Ok(take_optional_numeric_next_or_default(
+            cursor,
+            rule.default.as_ref(),
+        )),
+        ValueMode::ExactShortDefault if exact => {
+            Ok(advance_with_default(cursor, rule.default.as_ref()))
+        }
+        ValueMode::ExactShortDefault => take_non_option_next(cursor, flags, label, rule.ch),
+        ValueMode::AnyNextOrDefault => Ok(take_any_next_or_default(cursor, rule.default.as_ref())),
+    }
+}
+
+fn take_non_option_next<S: Storage>(
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    label: &str,
+    ch: char,
+) -> Result<String, Error> {
+    if cursor
+        .following()
+        .is_some_and(|value| is_option_boundary(value, flags))
+    {
+        return Err(Error::MissingValue(label.to_owned()));
+    }
+    cursor.next_value(ch)
+}
+
+fn take_any_next_or_default(cursor: &mut Cursor<'_>, default: &str) -> String {
+    match cursor.following() {
+        Some(value) => {
+            cursor.advance();
+            cursor.advance();
+            value.to_owned()
+        }
+        None => advance_with_default(cursor, default),
+    }
+}
+
+fn advance_with_default(cursor: &mut Cursor<'_>, default: &str) -> String {
+    cursor.advance();
+    default.to_owned()
+}
+
+fn take_next_or_default<S: Storage>(
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    default: &str,
+) -> String {
+    if let Some(value) = cursor
+        .following()
+        .filter(|value| !is_option_boundary(value, flags))
     {
         cursor.advance();
-        return Ok(default.to_owned());
-    }
-    if let Some(default) = numeric_next_value(flag_ch, flags) {
-        if byte_pos > 0 {
-            return cursor.next_value(flag_ch);
-        }
-        return match cursor.following() {
-            Some(value) if optional_numeric_value(value) => cursor.next_value(flag_ch),
-            Some(_) => {
-                cursor.advance();
-                Ok(default.to_owned())
-            }
-            None => {
-                cursor.advance();
-                Err(Error::MissingValue(format!("-{flag_ch}")))
-            }
-        };
-    }
-    if let Some((default, mode)) = optional_value(def.ch, flags) {
-        if cursor.following().is_some_and(|value| mode.consumes(value)) {
-            return cursor.next_value(flag_ch);
-        }
         cursor.advance();
-        return Ok(default.to_owned());
+        return value.to_owned();
     }
-    let label = format!("-{flag_ch}");
-    reject_option_value(cursor.following(), def, flags, &label)?;
-    cursor.next_value(flag_ch)
+    advance_with_default(cursor, default)
+}
+
+fn take_numeric_next_or_default(
+    cursor: &mut Cursor<'_>,
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    match cursor.following() {
+        Some(value) if is_numbering_spec(value) => {
+            cursor.advance();
+            cursor.take_next(label)
+        }
+        Some(_) => Ok(advance_with_default(cursor, default)),
+        None => Err(Error::MissingValue(label.to_owned())),
+    }
+}
+
+fn take_optional_numeric_next_or_default(cursor: &mut Cursor<'_>, default: &str) -> String {
+    match cursor.following() {
+        Some(value) if is_numbering_spec(value) => {
+            let value = value.to_owned();
+            cursor.advance();
+            cursor.advance();
+            value
+        }
+        Some(_) | None => advance_with_default(cursor, default),
+    }
 }
 
 fn reject_option_value<S: Storage>(
     value: Option<&str>,
     def: &FlagDef<S>,
     flags: &[FlagDef<S>],
+    exact_long: bool,
     label: &str,
 ) -> Result<(), Error> {
     if def.allow_hyphen_values {
@@ -666,25 +839,44 @@ fn reject_option_value<S: Storage>(
     let Some(value) = value.filter(|value| value.starts_with('-') && value.len() > 1) else {
         return Ok(());
     };
-    if is_declared_option(value, flags) {
+    if is_declared_option(value, flags, exact_long) {
         Err(Error::MissingValue(label.to_owned()))
     } else {
         Err(Error::UnknownFlag(value.to_owned()))
     }
 }
 
-fn is_declared_option<S: Storage>(value: &str, flags: &[FlagDef<S>]) -> bool {
+fn is_declared_option<S: Storage>(value: &str, flags: &[FlagDef<S>], exact_long: bool) -> bool {
     if value == "--" {
         return true;
     }
     if let Some(name) = value.strip_prefix("--") {
         let name = name.split_once('=').map_or(name, |(name, _)| name);
-        return !matches!(resolve_long(name, flags), LongMatch::Unknown);
+        return !matches!(resolve_long(name, flags, exact_long), LongMatch::Unknown);
     }
     value
         .strip_prefix('-')
         .and_then(|cluster| cluster.chars().next())
         .is_some_and(|ch| find_flag(ch, flags).is_some() || matches!(ch, 'h' | 'V'))
+}
+
+fn is_option_boundary<S: Storage>(value: &str, flags: &[FlagDef<S>]) -> bool {
+    (value.starts_with('-') && value.len() > 1)
+        || value
+            .strip_prefix('+')
+            .and_then(|cluster| cluster.chars().next())
+            .is_some_and(|ch| find_flag(ch, flags).is_some())
+}
+
+fn is_numbering_spec(value: &str) -> bool {
+    if value.starts_with('-') && value.len() > 1 {
+        return true;
+    }
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii() && chars.all(|ch| ch.is_ascii_digit())
 }
 
 // ── Long-option processing (GNU style) ──────────────────────────
@@ -699,21 +891,24 @@ enum LongMatch<'a, S: Storage> {
 }
 
 /// Parse one `--name` / `--name=value` token. Cursor is on that token.
-fn process_long<S: Storage>(
+fn process_long<S: Storage, P: Storage>(
     spec: &str,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     let (name, inline) = spec
         .split_once('=')
         .map_or((spec, None), |(n, v)| (n, Some(v)));
     cursor.advance();
-    match resolve_long(name, flags) {
-        LongMatch::Flag(def) => apply_long(def, name, inline, cursor, flags, result),
+    match resolve_long(name, config.flags, config.policy.exact_long) {
+        LongMatch::Flag(def) => {
+            apply_long(def, name, inline, cursor, config, result)?;
+            reject_latest_conflict(result, config, &format!("--{name}"))
+        }
         LongMatch::Help | LongMatch::Version if inline.is_some() => Err(Error::UnexpectedValue {
             flag: format!("--{name}"),
-            value: inline.expect("inline value checked").to_owned(),
+            value: inline.unwrap_or_default().to_owned(),
         }),
         LongMatch::Help => Err(Error::HelpRequested),
         LongMatch::Version => Err(Error::VersionRequested),
@@ -723,18 +918,17 @@ fn process_long<S: Storage>(
 }
 
 /// Record a resolved long flag, pulling a value from `=inline` or the next arg.
-fn apply_long<S: Storage>(
+fn apply_long<S: Storage, P: Storage>(
     def: &FlagDef<S>,
     name: &str,
     inline: Option<&str>,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     if !def.implemented {
         result.unimplemented.push(format!("--{name}"));
     }
-    reject_conflict(def.ch, &format!("--{name}"), flags, result)?;
     match def.kind {
         FlagKind::Noop => {
             reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;
@@ -743,43 +937,9 @@ fn apply_long<S: Storage>(
         }
         FlagKind::Bool | FlagKind::Polar => apply_long_flag(def, name, inline, result),
         FlagKind::Value | FlagKind::PolarValue => {
-            apply_long_value(def, name, inline, cursor, flags, result)
+            apply_long_value(def, name, inline, cursor, config, result)
         }
     }
-}
-
-fn reject_conflict<S: Storage>(
-    ch: char,
-    label: &str,
-    flags: &[FlagDef<S>],
-    result: &ScanResult,
-) -> Result<(), Error> {
-    let groups = flags
-        .iter()
-        .filter_map(|flag| flag.long.as_ref().strip_prefix("\0exclusive-flags:"));
-    for group in groups.filter(|group| group.contains(ch)) {
-        let current_group = group.split('|').find(|category| category.contains(ch));
-        let previous = result.flags.iter().map(parsed_char).find(|prior| {
-            group.contains(*prior)
-                && current_group.is_none_or(|category| !category.contains(*prior))
-        });
-        if let Some(previous) = previous {
-            return Err(Error::ConflictingFlags {
-                current: label.to_owned(),
-                previous: format!("-{previous}"),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn marker_chars<S: Storage>(flags: &[FlagDef<S>], name: &str) -> String {
-    let prefix = format!("\0{name}:");
-    flags
-        .iter()
-        .find_map(|flag| flag.long.as_ref().strip_prefix(&prefix))
-        .unwrap_or_default()
-        .to_owned()
 }
 
 fn reject_repeat<S: Storage>(
@@ -795,6 +955,41 @@ fn reject_repeat<S: Storage>(
         return Ok(());
     }
     Err(Error::RepeatedFlag(label.to_owned()))
+}
+
+fn reject_latest_conflict<S: Storage, P: Storage>(
+    result: &ScanResult,
+    config: &ScanConfig<'_, S, P>,
+    current: &str,
+) -> Result<(), Error> {
+    let Some(current_ch) = result.flags.last().map(parsed_char) else {
+        return Ok(());
+    };
+    let Some(current_group) = config.policy.exclusive_group(current_ch) else {
+        return Ok(());
+    };
+    let previous = result.flags.iter().rev().skip(1).find_map(|parsed| {
+        let ch = parsed_char(parsed);
+        config
+            .policy
+            .exclusive_group(ch)
+            .filter(|group| *group != current_group)
+            .and_then(|_| find_flag(ch, config.flags))
+    });
+    previous.map_or(Ok(()), |def| {
+        Err(Error::ConflictingFlags {
+            current: current.to_owned(),
+            previous: preferred_label(def),
+        })
+    })
+}
+
+fn preferred_label<S: Storage>(def: &FlagDef<S>) -> String {
+    if def.ch < '\u{E000}' {
+        format!("-{}", def.ch)
+    } else {
+        format!("--{}", def.long.as_ref())
+    }
 }
 
 const fn parsed_char(parsed: &Parsed) -> char {
@@ -829,33 +1024,51 @@ fn apply_long_flag<S: Storage>(
 }
 
 /// A long value flag: value comes from `=inline` or the next token.
-fn apply_long_value<S: Storage>(
+fn apply_long_value<S: Storage, P: Storage>(
     def: &FlagDef<S>,
     name: &str,
     inline: Option<&str>,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
-    if inline.is_none() && equals_only(name, flags) {
-        return Err(Error::UnknownFlag(format!("--{name}")));
-    }
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
-    let value = if let Some(value) = inline {
-        value.to_owned()
-    } else if numeric_next_value(def.ch, flags).is_some() {
-        let label = format!("--{name}");
-        cursor.take_next(&label)?
-    } else if let Some((default, mode)) = optional_value(def.ch, flags) {
-        if cursor.peek().is_some_and(|value| mode.consumes(value)) {
-            cursor.take_next(&format!("--{name}"))?
-        } else {
-            default.to_owned()
+    let label = format!("--{name}");
+    if inline.is_none() && config.policy.requires_equals(def.ch) {
+        return Err(Error::UnknownFlag(label));
+    }
+    let value = match (
+        inline,
+        config
+            .policy
+            .value(def.ch)
+            .map(|rule| (rule.mode, rule.default.as_ref())),
+    ) {
+        (Some(value), _) => value.to_owned(),
+        (None, Some((ValueMode::AttachedOrDefault, default))) => default.to_owned(),
+        (None, Some((ValueMode::NextOrDefault, default))) => {
+            take_long_next_or_default(cursor, config.flags, default, &label)?
         }
-    } else {
-        let label = format!("--{name}");
-        reject_option_value(cursor.peek(), def, flags, &label)?;
-        cursor.take_next(&label)?
+        (None, Some((ValueMode::NumericNextOrDefault, default))) => {
+            let _ = default;
+            cursor.take_next(&label)?
+        }
+        (None, Some((ValueMode::OptionalNumericNextOrDefault, default))) => {
+            take_long_optional_numeric_or_default(cursor, default, &label)?
+        }
+        (None, Some((ValueMode::AnyNextOrDefault, default))) => {
+            take_long_any_or_default(cursor, default, &label)?
+        }
+        (None, _) => {
+            reject_option_value(
+                cursor.peek(),
+                def,
+                config.flags,
+                config.policy.exact_long,
+                &label,
+            )?;
+            cursor.take_next(&label)?
+        }
     };
     reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;
     result.flags.push(if matches!(def.kind, FlagKind::Value) {
@@ -866,80 +1079,50 @@ fn apply_long_value<S: Storage>(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-enum OptionalMode {
-    Never,
-    Value,
-    Any,
-    Numeric,
-}
-
-impl OptionalMode {
-    fn consumes(self, value: &str) -> bool {
-        match self {
-            Self::Never => false,
-            Self::Value => is_value(value),
-            Self::Any => true,
-            Self::Numeric => optional_numeric_value(value),
-        }
+fn take_long_next_or_default<S: Storage>(
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    if cursor
+        .peek()
+        .is_some_and(|value| !is_option_boundary(value, flags))
+    {
+        cursor.take_next(label)
+    } else {
+        Ok(default.to_owned())
     }
 }
 
-fn optional_value<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<(&str, OptionalMode)> {
-    flags.iter().find_map(|flag| {
-        let (marker, mode) = optional_marker(flag.long.as_ref())?;
-        let (encoded, default) = marker.split_once(':')?;
-        (encoded.chars().next() == Some(ch)).then_some((default, mode))
-    })
+fn take_long_optional_numeric_or_default(
+    cursor: &mut Cursor<'_>,
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    match cursor.peek() {
+        Some(value) if is_numbering_spec(value) => cursor.take_next(label),
+        Some(_) | None => Ok(default.to_owned()),
+    }
 }
 
-fn numeric_next_value<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<&str> {
-    flags.iter().find_map(|flag| {
-        let marker = flag.long.as_ref().strip_prefix("\0numeric-next-value:")?;
-        let (encoded, default) = marker.split_once(':')?;
-        (encoded.chars().next() == Some(ch)).then_some(default)
-    })
-}
-
-fn exact_short_default<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<&str> {
-    flags.iter().find_map(|flag| {
-        let marker = flag.long.as_ref().strip_prefix("\0exact-short-default:")?;
-        let (encoded, default) = marker.split_once(':')?;
-        (encoded.chars().next() == Some(ch)).then_some(default)
-    })
-}
-
-fn optional_marker(text: &str) -> Option<(&str, OptionalMode)> {
-    [
-        ("\0optional-value:", OptionalMode::Never),
-        ("\0optional-next-value:", OptionalMode::Value),
-        ("\0optional-any-next-value:", OptionalMode::Any),
-        ("\0optional-numeric-next-value:", OptionalMode::Numeric),
-    ]
-    .into_iter()
-    .find_map(|(prefix, mode)| text.strip_prefix(prefix).map(|value| (value, mode)))
-}
-
-fn optional_numeric_value(value: &str) -> bool {
-    let mut chars = value.chars();
-    chars
-        .next()
-        .is_some_and(|first| first != '-' && chars.all(|ch| ch.is_ascii_digit()))
-}
-
-fn is_value(value: &str) -> bool {
-    value == "-" || !value.starts_with('-')
-}
-
-fn equals_only<S: Storage>(name: &str, flags: &[FlagDef<S>]) -> bool {
-    let marker = format!("\0equals-only:{name}");
-    flags
-        .iter()
-        .any(|flag| flag.hidden && flag.long.as_ref() == marker)
+fn take_long_any_or_default(
+    cursor: &mut Cursor<'_>,
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    match cursor.peek() {
+        Some(_) => cursor.take_next(label),
+        None => Ok(default.to_owned()),
+    }
 }
 
 /// Exact match wins; otherwise fall back to unambiguous-prefix inference.
-fn resolve_long<'a, S: Storage>(name: &str, flags: &'a [FlagDef<S>]) -> LongMatch<'a, S> {
+fn resolve_long<'a, S: Storage>(
+    name: &str,
+    flags: &'a [FlagDef<S>],
+    exact: bool,
+) -> LongMatch<'a, S> {
     if !name.is_empty()
         && let Some(def) = flags.iter().find(|f| {
             f.long.as_ref() == name
@@ -954,15 +1137,9 @@ fn resolve_long<'a, S: Storage>(name: &str, flags: &'a [FlagDef<S>]) -> LongMatc
     match name {
         "help" => LongMatch::Help,
         "version" => LongMatch::Version,
-        _ if exact_long_names(flags) => LongMatch::Unknown,
+        _ if exact => LongMatch::Unknown,
         _ => infer_long(name, flags),
     }
-}
-
-fn exact_long_names<S: Storage>(flags: &[FlagDef<S>]) -> bool {
-    flags
-        .iter()
-        .any(|flag| flag.hidden && flag.long.as_ref() == "\0exact-long")
 }
 
 /// Every long name a flag answers to: its primary long plus any aliases.

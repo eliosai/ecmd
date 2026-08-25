@@ -6,6 +6,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::meta::{CommandDef, Owned, PositionalDef};
 use crate::parse::FlagDef;
 use crate::parse::{FlagKind, OnUnknown};
+use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
 use crate::style::{HelpStyle, Style};
 
 /// Archive adapter for an owned flag definition
@@ -66,6 +67,25 @@ pub struct PositionalDefDef {
     spread: bool,
 }
 
+/// Archive adapter for an owned value rule
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = ValueRule<Owned>)]
+pub struct ValueRuleDef {
+    ch: char,
+    mode: ValueMode,
+    default: String,
+}
+
+impl From<ValueRuleDef> for ValueRule<Owned> {
+    fn from(value: ValueRuleDef) -> Self {
+        Self {
+            ch: value.ch,
+            mode: value.mode,
+            default: value.default,
+        }
+    }
+}
+
 impl From<PositionalDefDef> for PositionalDef<Owned> {
     fn from(value: PositionalDefDef) -> Self {
         Self {
@@ -101,6 +121,16 @@ pub struct CommandDefDef {
     rest_desc: String,
     rest_default: String,
     rest_required: bool,
+    #[rkyv(with = Map<ValueRuleDef>)]
+    value_rules: Vec<ValueRule<Owned>>,
+    numeric_operands: Vec<NumericOperandRule>,
+    first_numeric_value: Option<char>,
+    exact_long: bool,
+    equals_only: Vec<char>,
+    attached_values: Vec<char>,
+    separated_values: Vec<char>,
+    prefixed_values: Vec<char>,
+    exclusive_groups: Vec<ExclusiveRule>,
     tags: Vec<(String, String)>,
     description: Vec<String>,
     extra: Vec<String>,
@@ -125,6 +155,15 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             rest_desc: value.rest_desc,
             rest_default: value.rest_default,
             rest_required: value.rest_required,
+            value_rules: value.value_rules,
+            numeric_operands: value.numeric_operands,
+            first_numeric_value: value.first_numeric_value,
+            exact_long: value.exact_long,
+            equals_only: value.equals_only,
+            attached_values: value.attached_values,
+            separated_values: value.separated_values,
+            prefixed_values: value.prefixed_values,
+            exclusive_groups: value.exclusive_groups,
             tags: value.tags,
             description: value.description,
             extra: value.extra,
@@ -140,7 +179,8 @@ mod tests {
     use super::{ArchivedCommandDefDef, CommandDefDef};
     use crate::meta::{CommandDef, Owned};
     use crate::parse::{FlagDef, FlagKind, OnUnknown};
-    use crate::style::Style;
+    use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
+    use crate::style::{HelpStyle, Style};
 
     #[test]
     fn owned_command_definition_round_trips() {
@@ -164,11 +204,35 @@ mod tests {
                 implemented: false,
                 repeatable: false,
                 allow_hyphen_values: true,
-                possible_values: &[],
-                default_value: "",
+                possible_values: Vec::new(),
+                help_values: Vec::new(),
+                default_value: String::new(),
+                help_label: String::new(),
+                visible_aliases: Vec::new(),
             }],
             positionals: Vec::new(),
             has_rest: true,
+            rest_label: "ARGS".to_owned(),
+            rest_hidden: false,
+            rest_desc: "Additional values".to_owned(),
+            rest_default: String::new(),
+            rest_required: false,
+            value_rules: vec![ValueRule {
+                ch: 'f',
+                mode: ValueMode::AttachedOrDefault,
+                default: "local".to_owned(),
+            }],
+            numeric_operands: vec![NumericOperandRule {
+                ch: 'f',
+                prefix: '+',
+            }],
+            first_numeric_value: Some('f'),
+            exact_long: true,
+            equals_only: vec!['f'],
+            attached_values: vec!['f'],
+            separated_values: vec!['s'],
+            prefixed_values: vec!['f'],
+            exclusive_groups: vec![ExclusiveRule { ch: 'f', group: 1 }],
             tags: vec![("kind".to_owned(), "extension".to_owned())],
             description: Vec::new(),
             extra: Vec::new(),
@@ -195,5 +259,17 @@ mod tests {
         assert!(!decoded.flags()[0].implemented);
         assert!(!decoded.flags()[0].repeatable);
         assert!(decoded.flags()[0].allow_hyphen_values);
+        assert_eq!(decoded.value_rules[0].default, "local");
+        assert_eq!(decoded.numeric_operands[0].prefix, '+');
+        assert_eq!(decoded.first_numeric_value, Some('f'));
+        assert!(decoded.exact_long);
+        assert_eq!(decoded.equals_only, ['f']);
+        assert_eq!(decoded.attached_values, ['f']);
+        assert_eq!(decoded.separated_values, ['s']);
+        assert_eq!(decoded.prefixed_values, ['f']);
+        assert_eq!(
+            decoded.exclusive_groups.first().map(|rule| rule.group),
+            Some(1)
+        );
     }
 }
