@@ -30,6 +30,7 @@
 
 use crate::error::Error;
 use crate::parse::{FlagDef, FlagKind, OnUnknown};
+use crate::policy::{NumericOperandRule, ValueRule};
 use crate::style::Style;
 
 /// Storage used by command metadata
@@ -98,6 +99,12 @@ pub struct CommandDef<S: Storage = Static> {
     pub positionals: S::List<PositionalDef<S>>,
     /// Whether a rest-args (`Operands`) field exists.
     pub has_rest: bool,
+    /// Missing-value behavior keyed by flag identity.
+    pub value_rules: S::List<ValueRule<S>>,
+    /// Legacy numeric operand routes.
+    pub numeric_operands: S::List<NumericOperandRule>,
+    /// First-argument obsolete numeric flag target.
+    pub first_numeric_value: Option<char>,
     /// Generic key-value tags for downstream consumers.
     pub tags: S::List<(S::Text, S::Text)>,
     /// Body paragraphs between summary and Options.
@@ -157,9 +164,15 @@ where
     ///
     /// Returns an error when the arguments violate the declared shape.
     pub fn scan(&self, args: &[&str]) -> Result<crate::parse::ScanResult, Error> {
-        crate::parse::scan(
+        let policy = crate::parse::Policy::new(
+            self.value_rules.as_ref(),
+            self.numeric_operands.as_ref(),
+            self.first_numeric_value,
+        );
+        crate::parse::scan_with_policy(
             args,
             self.flags(),
+            policy,
             self.on_unknown,
             self.style,
             self.permute,
@@ -352,6 +365,14 @@ impl CommandDef<Static> {
                 .map(PositionalDef::into_owned)
                 .collect(),
             has_rest: self.has_rest,
+            value_rules: self
+                .value_rules
+                .iter()
+                .cloned()
+                .map(ValueRule::into_owned)
+                .collect(),
+            numeric_operands: self.numeric_operands.to_vec(),
+            first_numeric_value: self.first_numeric_value,
             tags: self
                 .tags
                 .iter()
@@ -494,6 +515,9 @@ mod tests {
             flags,
             positionals: &[],
             has_rest: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
             tags: &[],
             description,
             extra,
@@ -823,6 +847,9 @@ mod tests {
                 desc: "",
             }],
             has_rest: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
             tags: &[],
             description: &[],
             extra: &[],
@@ -924,6 +951,9 @@ mod tests {
             flags,
             positionals: &[],
             has_rest: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
             tags: &[],
             description: &[],
             extra: &[],
@@ -943,6 +973,9 @@ mod tests {
             flags: &GNU_FLAGS,
             positionals: &[],
             has_rest: true,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
             tags: &[],
             description: &[],
             extra: &[],
@@ -973,6 +1006,9 @@ mod tests {
             flags: &[],
             positionals: &[],
             has_rest: false,
+            value_rules: &[],
+            numeric_operands: &[],
+            first_numeric_value: None,
             tags: &[],
             description: &[],
             extra: &[],

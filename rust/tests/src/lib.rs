@@ -890,4 +890,112 @@ mod tests {
         assert!(VersionOptOut::def().help().contains("      --version"));
         assert!(!VersionOptOut::def().help().contains("-V, --version"));
     }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "policy-values",
+        style = "gnu",
+        tag(optional_values = "backup=@bare"),
+        tag(optional_next_values = "context=default"),
+        tag(numeric_next_values = "numbering=5"),
+        tag(exact_short_defaults = "expand_tabs=8"),
+        tag(numeric_operands = "legacy_columns=-,pages=+")
+    )]
+    struct PolicyValues {
+        #[flag(long = "backup")]
+        backup_control: Option<String>,
+        #[flag(long = "context")]
+        context: Option<String>,
+        #[flag(short = 'n', long = "number")]
+        numbering: Option<String>,
+        #[flag(short = 'e', long = "expand-tabs")]
+        expand_tabs: Option<String>,
+        #[flag(long = "", hide)]
+        legacy_columns: Option<String>,
+        #[flag(long = "pages")]
+        pages: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn optional_value_uses_default_without_consuming_operand() {
+        let command = PolicyValues::parse(&["--backup", "source"]).unwrap();
+
+        assert_eq!(command.backup_control.as_deref(), Some("@bare"));
+        assert_eq!(&*command.files, &["source"]);
+    }
+
+    #[test]
+    fn optional_next_value_consumes_an_operand_or_uses_default() {
+        let valued = PolicyValues::parse(&["--context", "label"]).unwrap();
+        assert_eq!(valued.context.as_deref(), Some("label"));
+        assert!(valued.files.is_empty());
+
+        let defaulted = PolicyValues::parse(&["--context", "--backup", "source"]).unwrap();
+        assert_eq!(defaulted.context.as_deref(), Some("default"));
+        assert_eq!(defaulted.backup_control.as_deref(), Some("@bare"));
+        assert_eq!(&*defaulted.files, &["source"]);
+    }
+
+    #[test]
+    fn numeric_next_value_consumes_only_its_numeric_shape() {
+        let valued = PolicyValues::parse(&["-n", "x5", "file"]).unwrap();
+        assert_eq!(valued.numbering.as_deref(), Some("x5"));
+        assert_eq!(&*valued.files, &["file"]);
+
+        let defaulted = PolicyValues::parse(&["-n", "file"]).unwrap();
+        assert_eq!(defaulted.numbering.as_deref(), Some("5"));
+        assert_eq!(&*defaulted.files, &["file"]);
+
+        assert_eq!(
+            PolicyValues::parse(&["-n"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-n".to_owned())
+        );
+    }
+
+    #[test]
+    fn exact_short_value_uses_default_without_changing_long_form() {
+        let defaulted = PolicyValues::parse(&["-e", "file"]).unwrap();
+        assert_eq!(defaulted.expand_tabs.as_deref(), Some("8"));
+        assert_eq!(&*defaulted.files, &["file"]);
+
+        let attached = PolicyValues::parse(&["-e4"]).unwrap();
+        assert_eq!(attached.expand_tabs.as_deref(), Some("4"));
+        assert_eq!(
+            PolicyValues::parse(&["--expand-tabs"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("--expand-tabs".to_owned())
+        );
+    }
+
+    #[test]
+    fn numeric_operands_route_to_typed_fields_after_other_operands() {
+        let command = PolicyValues::parse(&["file", "-3", "+2:4"]).unwrap();
+
+        assert_eq!(command.legacy_columns.as_deref(), Some("3"));
+        assert_eq!(command.pages.as_deref(), Some("2:4"));
+        assert_eq!(&*command.files, &["file"]);
+    }
+
+    #[derive(Command)]
+    #[command(
+        name = "obsolete-width",
+        style = "gnu",
+        tag(first_numeric_value = "width")
+    )]
+    struct ObsoleteWidth {
+        #[flag(short = 'w', long = "width")]
+        width: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn first_positive_numeric_option_routes_to_declared_value() {
+        let width = ObsoleteWidth::parse(&["-10", "file"]).unwrap();
+        assert_eq!(width.width.as_deref(), Some("10"));
+        assert_eq!(&*width.files, &["file"]);
+
+        let zero = ObsoleteWidth::parse(&["-0"]).unwrap();
+        assert_eq!(zero.width, None);
+        assert_eq!(&*zero.files, &["-0"]);
+    }
 }

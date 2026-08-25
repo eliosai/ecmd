@@ -6,6 +6,7 @@
 use crate::error::Error;
 use crate::meta::{Owned, Static, Storage};
 use crate::polarity::Polarity;
+use crate::policy::{NumericOperandRule, ValueMode, ValueRule};
 use crate::style::Style;
 
 // ── Public types ────────────────────────────────────────────────
@@ -140,6 +141,35 @@ pub fn scan<S: Storage>(
     style: Style,
     permute: bool,
 ) -> Result<ScanResult, Error> {
+    scan_with_policy(
+        args,
+        flags,
+        Policy::<Static>::STANDARD,
+        on_unknown,
+        style,
+        permute,
+    )
+}
+
+/// Parse arguments with command-specific value and numeric policies.
+///
+/// # Errors
+///
+/// Returns an error if the invocation violates the declared command shape.
+pub(crate) fn scan_with_policy<S: Storage, P: Storage>(
+    args: &[&str],
+    flags: &[FlagDef<S>],
+    policy: Policy<'_, P>,
+    on_unknown: OnUnknown,
+    style: Style,
+    permute: bool,
+) -> Result<ScanResult, Error> {
+    let config = ScanConfig {
+        flags,
+        policy,
+        on_unknown,
+        style,
+    };
     let mut result = ScanResult {
         flags: Vec::new(),
         operands: Vec::new(),
@@ -150,26 +180,24 @@ pub fn scan<S: Storage>(
     let mut cursor = Cursor::new(args);
 
     while let Some(arg) = cursor.peek() {
+        if process_first_numeric(arg, &mut cursor, &config, &mut result)? {
+            continue;
+        }
+        if process_numeric_operand(arg, &mut cursor, &config, &mut result)? {
+            continue;
+        }
         if arg == "--" {
             cursor.advance();
             break;
         }
         if gnu && is_long(arg) {
             let spec = arg.strip_prefix("--").unwrap_or_default();
-            process_long(spec, &mut cursor, flags, &mut result)?;
+            process_long(spec, &mut cursor, &config, &mut result)?;
             continue;
         }
         match classify(arg, has_polarity) {
             ArgClass::Flags(polarity, chars) => {
-                process_cluster(
-                    chars,
-                    polarity,
-                    &mut cursor,
-                    flags,
-                    on_unknown,
-                    style,
-                    &mut result,
-                )?;
+                process_cluster(chars, polarity, &mut cursor, &config, &mut result)?;
             }
             // GNU permutation: an operand does not stop option scanning. With
             // `permute` off (POSIX order, e.g. `basename`), the first operand does.
@@ -192,6 +220,113 @@ pub fn scan<S: Storage>(
     Ok(result)
 }
 
+pub(crate) struct Policy<'a, S: Storage> {
+    value_rules: &'a [ValueRule<S>],
+    numeric_operands: &'a [NumericOperandRule],
+    first_numeric_value: Option<char>,
+}
+
+impl<S: Storage> Policy<'_, S> {
+    const STANDARD: Policy<'static, Static> = Policy {
+        value_rules: &[],
+        numeric_operands: &[],
+        first_numeric_value: None,
+    };
+
+    pub(crate) const fn new<'a>(
+        value_rules: &'a [ValueRule<S>],
+        numeric_operands: &'a [NumericOperandRule],
+        first_numeric_value: Option<char>,
+    ) -> Policy<'a, S> {
+        Policy {
+            value_rules,
+            numeric_operands,
+            first_numeric_value,
+        }
+    }
+
+    fn value(&self, ch: char) -> Option<&ValueRule<S>> {
+        self.value_rules.iter().find(|rule| rule.ch == ch)
+    }
+}
+
+struct ScanConfig<'a, S: Storage, P: Storage> {
+    flags: &'a [FlagDef<S>],
+    policy: Policy<'a, P>,
+    on_unknown: OnUnknown,
+    style: Style,
+}
+
+fn process_first_numeric<S: Storage, P: Storage>(
+    arg: &str,
+    cursor: &mut Cursor<'_>,
+    config: &ScanConfig<'_, S, P>,
+    result: &mut ScanResult,
+) -> Result<bool, Error> {
+    let Some(ch) = config
+        .policy
+        .first_numeric_value
+        .filter(|_| cursor.at_start())
+    else {
+        return Ok(false);
+    };
+    let Some(value) = arg.strip_prefix('-').filter(|value| is_unsigned(value)) else {
+        return Ok(false);
+    };
+    let Some(def) = find_flag(ch, config.flags) else {
+        return Ok(false);
+    };
+    if value.bytes().all(|byte| byte == b'0') {
+        result.operands.push(arg.to_owned());
+    } else {
+        record_unimplemented(def, arg, result);
+        reject_repeat(def, result, arg, config.style)?;
+        result.flags.push(Parsed::Value(ch, value.to_owned()));
+    }
+    cursor.advance();
+    Ok(true)
+}
+
+fn process_numeric_operand<S: Storage, P: Storage>(
+    arg: &str,
+    cursor: &mut Cursor<'_>,
+    config: &ScanConfig<'_, S, P>,
+    result: &mut ScanResult,
+) -> Result<bool, Error> {
+    let Some((rule, value)) = config.policy.numeric_operands.iter().find_map(|rule| {
+        arg.strip_prefix(rule.prefix)
+            .filter(|value| is_numeric_range(value))
+            .map(|value| (rule, value))
+    }) else {
+        return Ok(false);
+    };
+    let Some(def) = find_flag(rule.ch, config.flags) else {
+        return Ok(false);
+    };
+    record_unimplemented(def, arg, result);
+    reject_repeat(def, result, arg, config.style)?;
+    result.flags.push(Parsed::Value(rule.ch, value.to_owned()));
+    cursor.advance();
+    Ok(true)
+}
+
+fn is_numeric_range(value: &str) -> bool {
+    let Some((first, last)) = value.split_once(':') else {
+        return is_unsigned(value);
+    };
+    is_unsigned(first) && is_unsigned(last) && !last.contains(':')
+}
+
+fn is_unsigned(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn record_unimplemented<S: Storage>(def: &FlagDef<S>, label: &str, result: &mut ScanResult) {
+    if !def.implemented {
+        result.unimplemented.push(label.to_owned());
+    }
+}
+
 /// A `--name` or `--name=value` token (but not the bare `--` terminator).
 fn is_long(arg: &str) -> bool {
     arg.len() > 2 && arg.starts_with("--")
@@ -211,6 +346,10 @@ impl<'a> Cursor<'a> {
 
     fn peek(&self) -> Option<&'a str> {
         self.args.get(self.pos).copied()
+    }
+
+    const fn at_start(&self) -> bool {
+        self.pos == 0
     }
 
     const fn advance(&mut self) {
@@ -272,26 +411,24 @@ fn find_flag<S: Storage>(ch: char, flags: &[FlagDef<S>]) -> Option<&FlagDef<S>> 
 
 // ── Cluster processing ──────────────────────────────────────────
 
-fn process_cluster<S: Storage>(
+fn process_cluster<S: Storage, P: Storage>(
     chars: &str,
     polarity: Polarity,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    on_unknown: OnUnknown,
-    style: Style,
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     if try_passthrough(
         chars,
         cursor,
-        flags,
-        on_unknown,
-        style,
+        config.flags,
+        config.on_unknown,
+        config.style,
         &mut result.operands,
     ) {
         return Ok(());
     }
-    parse_known_cluster(chars, polarity, cursor, flags, style, result)
+    parse_known_cluster(chars, polarity, cursor, config, result)
 }
 
 fn try_passthrough<S: Storage>(
@@ -329,39 +466,34 @@ fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style)
     false
 }
 
-fn parse_known_cluster<S: Storage>(
+fn parse_known_cluster<S: Storage, P: Storage>(
     chars: &str,
     polarity: Polarity,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    style: Style,
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     for (bi, &byte) in chars.as_bytes().iter().enumerate() {
         let ch = char::from(byte);
-        let Some(def) = find_flag(ch, flags) else {
-            return Err(implicit_short_action(ch, style)
+        let Some(def) = find_flag(ch, config.flags) else {
+            return Err(implicit_short_action(ch, config.style)
                 .unwrap_or_else(|| Error::UnknownFlag(format!("-{ch}"))));
         };
         if !def.implemented {
             result.unimplemented.push(format!("-{ch}"));
         }
         match def.kind {
-            FlagKind::Bool => {
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
-                result.flags.push(Parsed::Bool(ch));
-            }
-            FlagKind::Noop => {
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
+            FlagKind::Bool | FlagKind::Noop => {
+                reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 result.flags.push(Parsed::Bool(ch));
             }
             FlagKind::Polar => {
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
+                reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 result.flags.push(Parsed::Polar(ch, polarity));
             }
             FlagKind::Value | FlagKind::PolarValue => {
-                let value = extract_value(chars, bi, cursor, ch, def, flags)?;
-                reject_repeat(def, result, &format!("-{ch}"), style)?;
+                let value = extract_value(chars, bi, cursor, ch, def, config)?;
+                reject_repeat(def, result, &format!("-{ch}"), config.style)?;
                 let parsed = match def.kind {
                     FlagKind::Value => Parsed::Value(ch, value),
                     _ => Parsed::PolarValue(ch, polarity, value),
@@ -386,13 +518,13 @@ fn implicit_short_action(ch: char, style: Style) -> Option<Error> {
     }
 }
 
-fn extract_value<S: Storage>(
+fn extract_value<S: Storage, P: Storage>(
     chars: &str,
     byte_pos: usize,
     cursor: &mut Cursor<'_>,
     flag_ch: char,
     def: &FlagDef<S>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
 ) -> Result<String, Error> {
     let after = byte_pos.saturating_add(1);
     let remainder = chars.get(after..).unwrap_or_default();
@@ -402,8 +534,67 @@ fn extract_value<S: Storage>(
         return Ok(remainder.strip_prefix('=').unwrap_or(remainder).to_owned());
     }
     let label = format!("-{flag_ch}");
-    reject_option_value(cursor.following(), def, flags, &label)?;
+    if let Some(rule) = config.policy.value(flag_ch) {
+        return apply_short_value_rule(rule, cursor, config.flags, &label, chars.len() == 1);
+    }
+    reject_option_value(cursor.following(), def, config.flags, &label)?;
     cursor.next_value(flag_ch)
+}
+
+fn apply_short_value_rule<S: Storage, P: Storage>(
+    rule: &crate::policy::ValueRule<P>,
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    label: &str,
+    exact: bool,
+) -> Result<String, Error> {
+    match rule.mode {
+        ValueMode::AttachedOrDefault => Ok(advance_with_default(cursor, rule.default.as_ref())),
+        ValueMode::NextOrDefault => Ok(take_next_or_default(cursor, flags, rule.default.as_ref())),
+        ValueMode::NumericNextOrDefault => {
+            take_numeric_next_or_default(cursor, rule.default.as_ref(), label)
+        }
+        ValueMode::ExactShortDefault if exact => {
+            Ok(advance_with_default(cursor, rule.default.as_ref()))
+        }
+        ValueMode::ExactShortDefault => cursor.next_value(rule.ch),
+    }
+}
+
+fn advance_with_default(cursor: &mut Cursor<'_>, default: &str) -> String {
+    cursor.advance();
+    default.to_owned()
+}
+
+fn take_next_or_default<S: Storage>(
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    default: &str,
+) -> String {
+    if let Some(value) = cursor
+        .following()
+        .filter(|value| !is_option_boundary(value, flags))
+    {
+        cursor.advance();
+        cursor.advance();
+        return value.to_owned();
+    }
+    advance_with_default(cursor, default)
+}
+
+fn take_numeric_next_or_default(
+    cursor: &mut Cursor<'_>,
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    match cursor.following() {
+        Some(value) if is_numbering_spec(value) => {
+            cursor.advance();
+            cursor.take_next(label)
+        }
+        Some(_) => Ok(advance_with_default(cursor, default)),
+        None => Err(Error::MissingValue(label.to_owned())),
+    }
 }
 
 fn reject_option_value<S: Storage>(
@@ -439,6 +630,22 @@ fn is_declared_option<S: Storage>(value: &str, flags: &[FlagDef<S>]) -> bool {
         .is_some_and(|ch| find_flag(ch, flags).is_some() || matches!(ch, 'h' | 'V'))
 }
 
+fn is_option_boundary<S: Storage>(value: &str, flags: &[FlagDef<S>]) -> bool {
+    (value.starts_with('-') && value.len() > 1)
+        || value
+            .strip_prefix('+')
+            .and_then(|cluster| cluster.chars().next())
+            .is_some_and(|ch| find_flag(ch, flags).is_some())
+}
+
+fn is_numbering_spec(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii() && chars.all(|ch| ch.is_ascii_digit())
+}
+
 // ── Long-option processing (GNU style) ──────────────────────────
 
 /// Outcome of resolving a long-option name against the declared flags.
@@ -451,18 +658,18 @@ enum LongMatch<'a, S: Storage> {
 }
 
 /// Parse one `--name` / `--name=value` token. Cursor is on that token.
-fn process_long<S: Storage>(
+fn process_long<S: Storage, P: Storage>(
     spec: &str,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     let (name, inline) = spec
         .split_once('=')
         .map_or((spec, None), |(n, v)| (n, Some(v)));
     cursor.advance();
-    match resolve_long(name, flags) {
-        LongMatch::Flag(def) => apply_long(def, name, inline, cursor, flags, result),
+    match resolve_long(name, config.flags) {
+        LongMatch::Flag(def) => apply_long(def, name, inline, cursor, config, result),
         LongMatch::Help | LongMatch::Version if inline.is_some() => Err(Error::UnexpectedValue {
             flag: format!("--{name}"),
             value: inline.unwrap_or_default().to_owned(),
@@ -475,12 +682,12 @@ fn process_long<S: Storage>(
 }
 
 /// Record a resolved long flag, pulling a value from `=inline` or the next arg.
-fn apply_long<S: Storage>(
+fn apply_long<S: Storage, P: Storage>(
     def: &FlagDef<S>,
     name: &str,
     inline: Option<&str>,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     if !def.implemented {
@@ -494,7 +701,7 @@ fn apply_long<S: Storage>(
         }
         FlagKind::Bool | FlagKind::Polar => apply_long_flag(def, name, inline, result),
         FlagKind::Value | FlagKind::PolarValue => {
-            apply_long_value(def, name, inline, cursor, flags, result)
+            apply_long_value(def, name, inline, cursor, config, result)
         }
     }
 }
@@ -546,21 +753,35 @@ fn apply_long_flag<S: Storage>(
 }
 
 /// A long value flag: value comes from `=inline` or the next token.
-fn apply_long_value<S: Storage>(
+fn apply_long_value<S: Storage, P: Storage>(
     def: &FlagDef<S>,
     name: &str,
     inline: Option<&str>,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
+    config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<(), Error> {
     // GNU getopt_long parity: a value flag consumes the next token even when it looks like an option.
-    let value = if let Some(value) = inline {
-        value.to_owned()
-    } else {
-        let label = format!("--{name}");
-        reject_option_value(cursor.peek(), def, flags, &label)?;
-        cursor.take_next(&label)?
+    let label = format!("--{name}");
+    let value = match (
+        inline,
+        config
+            .policy
+            .value(def.ch)
+            .map(|rule| (rule.mode, rule.default.as_ref())),
+    ) {
+        (Some(value), _) => value.to_owned(),
+        (None, Some((ValueMode::AttachedOrDefault, default))) => default.to_owned(),
+        (None, Some((ValueMode::NextOrDefault, default))) => {
+            take_long_next_or_default(cursor, config.flags, default, &label)?
+        }
+        (None, Some((ValueMode::NumericNextOrDefault, default))) => {
+            take_long_numeric_or_default(cursor, default, &label)?
+        }
+        (None, _) => {
+            reject_option_value(cursor.peek(), def, config.flags, &label)?;
+            cursor.take_next(&label)?
+        }
     };
     reject_repeat(def, result, &format!("--{name}"), Style::Gnu)?;
     result.flags.push(if matches!(def.kind, FlagKind::Value) {
@@ -569,6 +790,34 @@ fn apply_long_value<S: Storage>(
         Parsed::PolarValue(def.ch, Polarity::On, value)
     });
     Ok(())
+}
+
+fn take_long_next_or_default<S: Storage>(
+    cursor: &mut Cursor<'_>,
+    flags: &[FlagDef<S>],
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    if cursor
+        .peek()
+        .is_some_and(|value| !is_option_boundary(value, flags))
+    {
+        cursor.take_next(label)
+    } else {
+        Ok(default.to_owned())
+    }
+}
+
+fn take_long_numeric_or_default(
+    cursor: &mut Cursor<'_>,
+    default: &str,
+    label: &str,
+) -> Result<String, Error> {
+    match cursor.peek() {
+        Some(value) if is_numbering_spec(value) => cursor.take_next(label),
+        Some(_) => Ok(default.to_owned()),
+        None => Err(Error::MissingValue(label.to_owned())),
+    }
 }
 
 /// Exact match wins; otherwise fall back to unambiguous-prefix inference.

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, Ident};
 
@@ -30,8 +30,9 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     validate(&fields)?;
     let name = &input.ident;
 
-    let meta_body = gen_meta(&cmd, &sections, &fields);
-    let parse_body = gen_parse(&cmd, &fields);
+    let policy = gen_policy(&cmd, &fields)?;
+    let meta_body = gen_meta(&cmd, &sections, &fields, &policy);
+    let parse_body = gen_parse(&fields);
 
     Ok(quote! {
         impl ::ecmd::meta::Command for #name {
@@ -172,24 +173,14 @@ fn check_clears_targets(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
 
 // ── Parse codegen ───────────────────────────────────────────────
 
-fn gen_parse(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let on_unknown = if cmd.lenient {
-        quote! { ::ecmd::parse::OnUnknown::PassThrough }
-    } else {
-        quote! { ::ecmd::parse::OnUnknown::Reject }
-    };
-
-    let flag_defs = gen_flag_defs(cmd, fields);
+fn gen_parse(fields: &[ClassifiedField<'_>]) -> TokenStream {
     let inits = gen_inits(fields);
     let dispatch = gen_dispatch(fields);
     let positionals = gen_positionals(fields);
     let names: Vec<_> = fields.iter().map(|cf| cf.ident).collect();
-    let style = style_tokens(cmd);
-    let permute = !cmd.no_permute;
 
     quote! {
-        static FLAGS: &[::ecmd::parse::FlagDef] = &[#flag_defs];
-        let result = ::ecmd::parse::scan(args, FLAGS, #on_unknown, #style, #permute)?;
+        let result = Self::def().scan(args)?;
         if let Some(flag) = result.unimplemented.first() {
             return Err(::ecmd::error::Error::UnimplementedFlag(flag.clone()));
         }
@@ -207,25 +198,6 @@ fn gen_parse(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream 
 
         Ok(Self { #(#names),* })
     }
-}
-
-fn gen_flag_defs(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
-    let mut defs: Vec<TokenStream> = Vec::new();
-
-    for cf in fields {
-        if let Some(literal) = flag_def_literal(cf, fields, cmd) {
-            defs.push(literal);
-        }
-    }
-
-    for ch in cmd.noop.chars() {
-        defs.push(quote! {
-            ::ecmd::parse::FlagDef { ch: #ch, long: "", aliases: &[], kind: ::ecmd::parse::FlagKind::Noop, clears: &[], desc: "", value_name: "", hidden: false, implemented: true, repeatable: false, allow_hyphen_values: true }
-        });
-    }
-    append_version_opt_out(&mut defs, cmd);
-
-    quote! { #(#defs),* }
 }
 
 fn append_version_opt_out(defs: &mut Vec<TokenStream>, cmd: &CommandAttrs) {
@@ -362,12 +334,173 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
     quote! { #(#stmts)* }
 }
 
+// ── Parse policy codegen ────────────────────────────────────────
+
+struct ValuePolicyLiteral {
+    ch: char,
+    mode: TokenStream,
+    default: String,
+}
+
+struct PolicyTokens {
+    values: TokenStream,
+    numeric_operands: TokenStream,
+    first_numeric: TokenStream,
+}
+
+fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result<PolicyTokens> {
+    let mut values = Vec::new();
+    let mut numeric_operands = Vec::new();
+    let mut first_numeric = None;
+    let mut seen_values = HashSet::new();
+    for (key, value) in &cmd.tags {
+        let mode = match key.as_str() {
+            "optional_values" => Some(quote! { ::ecmd::policy::ValueMode::AttachedOrDefault }),
+            "optional_next_values" => Some(quote! { ::ecmd::policy::ValueMode::NextOrDefault }),
+            "numeric_next_values" => {
+                Some(quote! { ::ecmd::policy::ValueMode::NumericNextOrDefault })
+            }
+            "exact_short_defaults" => Some(quote! { ::ecmd::policy::ValueMode::ExactShortDefault }),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            append_value_rules(value, &mode, fields, &mut values, &mut seen_values)?;
+        } else if key == "numeric_operands" {
+            append_numeric_operands(value, fields, &mut numeric_operands)?;
+        } else if key == "first_numeric_value" {
+            first_numeric = Some(policy_field(fields, value)?.id);
+        }
+    }
+    Ok(policy_literal(&values, &numeric_operands, first_numeric))
+}
+
+fn append_value_rules(
+    raw: &str,
+    mode: &TokenStream,
+    fields: &[ClassifiedField<'_>],
+    values: &mut Vec<ValuePolicyLiteral>,
+    seen: &mut HashSet<char>,
+) -> syn::Result<()> {
+    for entry in raw.split(',').filter(|entry| !entry.is_empty()) {
+        let (name, default) = entry.split_once('=').unwrap_or((entry, ""));
+        let field = policy_field(fields, name.trim())?;
+        if !seen.insert(field.id) {
+            return Err(syn::Error::new_spanned(
+                field.field,
+                "duplicate value policy",
+            ));
+        }
+        values.push(ValuePolicyLiteral {
+            ch: field.id,
+            mode: mode.clone(),
+            default: default.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn append_numeric_operands(
+    raw: &str,
+    fields: &[ClassifiedField<'_>],
+    rules: &mut Vec<(char, char)>,
+) -> syn::Result<()> {
+    for entry in raw.split(',').filter(|entry| !entry.is_empty()) {
+        let Some((name, prefix)) = entry.split_once('=') else {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "numeric operand policy needs field=prefix",
+            ));
+        };
+        let field = policy_field(fields, name.trim())?;
+        let mut chars = prefix.chars();
+        let Some(prefix) = chars.next().filter(|_| chars.next().is_none()) else {
+            return Err(syn::Error::new_spanned(
+                field.field,
+                "numeric operand prefix must be one character",
+            ));
+        };
+        rules.push((field.id, prefix));
+    }
+    Ok(())
+}
+
+fn policy_field<'a, 'field>(
+    fields: &'a [ClassifiedField<'field>],
+    name: &str,
+) -> syn::Result<&'a ClassifiedField<'field>> {
+    let field = if let Some(field) = fields.iter().find(|field| field.ident == name) {
+        field
+    } else {
+        unique_policy_long(fields, name)?
+    };
+    if matches!(
+        field.role,
+        FieldRole::ValuedFlag(_) | FieldRole::RepeatableValueFlag(_) | FieldRole::PolarValueFlag(_)
+    ) {
+        Ok(field)
+    } else {
+        Err(syn::Error::new_spanned(
+            field.field,
+            "policy field must be a valued flag",
+        ))
+    }
+}
+
+fn unique_policy_long<'a, 'field>(
+    fields: &'a [ClassifiedField<'field>],
+    name: &str,
+) -> syn::Result<&'a ClassifiedField<'field>> {
+    let mut matches = fields.iter().filter(|field| policy_long(field, name));
+    let Some(field) = matches.next() else {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("unknown policy field `{name}`"),
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(syn::Error::new_spanned(
+            field.field,
+            "ambiguous policy field",
+        ));
+    }
+    Ok(field)
+}
+
+fn policy_long(field: &ClassifiedField<'_>, name: &str) -> bool {
+    flag_attrs(&field.role).is_some_and(|attrs| {
+        attrs.long.as_deref() == Some(name) || (attrs.long.is_none() && kebab(field.ident) == name)
+    })
+}
+
+fn policy_literal(
+    values: &[ValuePolicyLiteral],
+    numeric_operands: &[(char, char)],
+    first_numeric: Option<char>,
+) -> PolicyTokens {
+    let value_rules = values.iter().map(|rule| {
+        let ch = rule.ch;
+        let mode = &rule.mode;
+        let default = &rule.default;
+        quote! { ::ecmd::policy::ValueRule { ch: #ch, mode: #mode, default: #default } }
+    });
+    let numeric_rules = numeric_operands.iter().map(|(ch, prefix)| {
+        quote! { ::ecmd::policy::NumericOperandRule { ch: #ch, prefix: #prefix } }
+    });
+    let first = first_numeric.map_or_else(|| quote! { None }, |ch| quote! { Some(#ch) });
+    PolicyTokens {
+        values: quote! { &[#(#value_rules),*] },
+        numeric_operands: quote! { &[#(#numeric_rules),*] },
+        first_numeric: first,
+    }
+}
+
 // ── Meta codegen ────────────────────────────────────────────────
 
 fn gen_meta(
     cmd: &CommandAttrs,
     sections: &crate::attrs::DocSections,
     fields: &[ClassifiedField<'_>],
+    policy: &PolicyTokens,
 ) -> TokenStream {
     let name = &cmd.name;
     let about = &sections.about;
@@ -382,6 +515,9 @@ fn gen_meta(
     let flag_metas = gen_flag_metas(cmd, fields);
     let pos_metas = gen_positional_metas(fields);
     let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
+    let value_rules = &policy.values;
+    let numeric_operands = &policy.numeric_operands;
+    let first_numeric = &policy.first_numeric;
     let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
     let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
 
@@ -404,6 +540,9 @@ fn gen_meta(
             flags: &[#flag_metas],
             positionals: &[#pos_metas],
             has_rest: #has_rest,
+            value_rules: #value_rules,
+            numeric_operands: #numeric_operands,
+            first_numeric_value: #first_numeric,
             tags: &[#( (#tag_keys, #tag_vals) ),*],
             description: &[#( #desc_lines ),*],
             extra: &[#( #extra_lines ),*],

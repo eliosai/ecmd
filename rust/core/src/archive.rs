@@ -6,6 +6,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::meta::{CommandDef, Owned, PositionalDef};
 use crate::parse::FlagDef;
 use crate::parse::{FlagKind, OnUnknown};
+use crate::policy::{NumericOperandRule, ValueMode, ValueRule};
 use crate::style::Style;
 
 /// Archive adapter for an owned flag definition
@@ -52,6 +53,25 @@ pub struct PositionalDefDef {
     desc: String,
 }
 
+/// Archive adapter for an owned value rule
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = ValueRule<Owned>)]
+pub struct ValueRuleDef {
+    ch: char,
+    mode: ValueMode,
+    default: String,
+}
+
+impl From<ValueRuleDef> for ValueRule<Owned> {
+    fn from(value: ValueRuleDef) -> Self {
+        Self {
+            ch: value.ch,
+            mode: value.mode,
+            default: value.default,
+        }
+    }
+}
+
 impl From<PositionalDefDef> for PositionalDef<Owned> {
     fn from(value: PositionalDefDef) -> Self {
         Self {
@@ -77,6 +97,10 @@ pub struct CommandDefDef {
     #[rkyv(with = Map<PositionalDefDef>)]
     positionals: Vec<PositionalDef<Owned>>,
     has_rest: bool,
+    #[rkyv(with = Map<ValueRuleDef>)]
+    value_rules: Vec<ValueRule<Owned>>,
+    numeric_operands: Vec<NumericOperandRule>,
+    first_numeric_value: Option<char>,
     tags: Vec<(String, String)>,
     description: Vec<String>,
     extra: Vec<String>,
@@ -95,6 +119,9 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             flags: value.flags,
             positionals: value.positionals,
             has_rest: value.has_rest,
+            value_rules: value.value_rules,
+            numeric_operands: value.numeric_operands,
+            first_numeric_value: value.first_numeric_value,
             tags: value.tags,
             description: value.description,
             extra: value.extra,
@@ -110,6 +137,7 @@ mod tests {
     use super::{ArchivedCommandDefDef, CommandDefDef};
     use crate::meta::{CommandDef, Owned};
     use crate::parse::{FlagDef, FlagKind, OnUnknown};
+    use crate::policy::{NumericOperandRule, ValueMode, ValueRule};
     use crate::style::Style;
 
     #[test]
@@ -136,6 +164,16 @@ mod tests {
             }],
             positionals: Vec::new(),
             has_rest: true,
+            value_rules: vec![ValueRule {
+                ch: 'f',
+                mode: ValueMode::AttachedOrDefault,
+                default: "local".to_owned(),
+            }],
+            numeric_operands: vec![NumericOperandRule {
+                ch: 'f',
+                prefix: '+',
+            }],
+            first_numeric_value: Some('f'),
             tags: vec![("kind".to_owned(), "extension".to_owned())],
             description: Vec::new(),
             extra: Vec::new(),
@@ -162,5 +200,8 @@ mod tests {
         assert!(!decoded.flags()[0].implemented);
         assert!(!decoded.flags()[0].repeatable);
         assert!(decoded.flags()[0].allow_hyphen_values);
+        assert_eq!(decoded.value_rules[0].default, "local");
+        assert_eq!(decoded.numeric_operands[0].prefix, '+');
+        assert_eq!(decoded.first_numeric_value, Some('f'));
     }
 }

@@ -32,6 +32,7 @@ pub mod meta;
 pub mod operands;
 pub mod parse;
 pub mod polarity;
+pub mod policy;
 pub mod prelude;
 pub mod style;
 
