@@ -95,6 +95,21 @@ mod tests {
         assert_eq!(cmd.args.join(" "), "-nXYZ rest");
     }
 
+    #[derive(Command)]
+    #[command(name = "gnu-lenient", style = "gnu", lenient)]
+    struct GnuLenient {
+        #[flag(short = 'n', long = "number")]
+        number: bool,
+        args: Operands,
+    }
+
+    #[test]
+    fn gnu_lenient_unknown_long_becomes_operand() {
+        let cmd = GnuLenient::parse(&["--not-an-option=value", "rest"]).unwrap();
+        assert!(!cmd.number);
+        assert_eq!(cmd.args.join(" "), "--not-an-option=value rest");
+    }
+
     // ── Polarity ────────────────────────────────────────────────
 
     #[derive(Command)]
@@ -830,6 +845,450 @@ mod tests {
     fn long_only_prefix_inference() {
         let cmd = Paint::parse(&["--col", "x"]).unwrap();
         assert!(cmd.color);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "exact",
+        style = "gnu",
+        tag(exact_long),
+        tag(equals_only = "limit")
+    )]
+    struct ExactLong {
+        #[flag(long = "verbose")]
+        verbose: bool,
+        #[flag(long = "limit", value_name = "COUNT")]
+        limit: Option<String>,
+        files: Operands,
+    }
+
+    #[test]
+    fn exact_long_tag_rejects_unambiguous_prefixes() {
+        assert_eq!(
+            ExactLong::parse(&["--verb", "x"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("--verb".to_owned())
+        );
+        let command = ExactLong::parse(&["--verbose", "x"]).unwrap();
+        assert!(command.verbose);
+        assert_eq!(command.files[0], "x");
+    }
+
+    #[test]
+    fn equals_only_tag_rejects_a_separated_long_value() {
+        assert_eq!(
+            ExactLong::parse(&["--limit", "2", "x"]).unwrap_err(),
+            ecmd::error::Error::UnknownFlag("--limit".to_owned())
+        );
+        let command = ExactLong::parse(&["--limit=2", "x"]).unwrap();
+        assert_eq!(command.limit.as_deref(), Some("2"));
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "optional-value",
+        style = "gnu",
+        tag(optional_values = "legacy=default")
+    )]
+    struct OptionalValue {
+        #[flag(short = 'i', long = "replace")]
+        legacy: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_value_uses_its_default_without_consuming_an_operand() {
+        let command = OptionalValue::parse(&["-i", "printf"]).unwrap();
+        assert_eq!(command.legacy.as_deref(), Some("default"));
+        assert_eq!(&*command.args, &["printf"]);
+
+        let command = OptionalValue::parse(&["--replace", "printf"]).unwrap();
+        assert_eq!(command.legacy.as_deref(), Some("default"));
+        assert_eq!(&*command.args, &["printf"]);
+    }
+
+    #[test]
+    fn optional_value_accepts_attached_short_and_long_values() {
+        let short = OptionalValue::parse(&["-iVALUE"]).unwrap();
+        assert_eq!(short.legacy.as_deref(), Some("VALUE"));
+
+        let long = OptionalValue::parse(&["--replace=VALUE"]).unwrap();
+        assert_eq!(long.legacy.as_deref(), Some("VALUE"));
+    }
+
+    #[test]
+    fn owned_definition_keeps_optional_value_parsing() {
+        OptionalValue::def()
+            .clone()
+            .into_owned()
+            .scan(&["--replace"])
+            .expect("owned metadata parses like the command");
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "long-optional-value",
+        style = "gnu",
+        tag(optional_values = "mode=default")
+    )]
+    struct LongOptionalValue {
+        #[flag(long = "mode")]
+        mode: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn long_only_optional_value_uses_its_default_without_consuming_an_operand() {
+        let command = LongOptionalValue::parse(&["--mode", "operand"]).unwrap();
+        assert_eq!(command.mode.as_deref(), Some("default"));
+        assert_eq!(&*command.args, &["operand"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "optional-next-value",
+        style = "gnu",
+        tag(optional_next_values = "lines=1")
+    )]
+    struct OptionalNextValue {
+        #[flag(short = 'l', long = "lines")]
+        lines: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_next_value_consumes_a_non_option_or_uses_its_default() {
+        let consumed = OptionalNextValue::parse(&["-l", "2", "printf"]).unwrap();
+        assert_eq!(consumed.lines.as_deref(), Some("2"));
+        assert_eq!(&*consumed.args, &["printf"]);
+
+        let defaulted = OptionalNextValue::parse(&["-l", "-r"]).unwrap_err();
+        assert_eq!(defaulted, ecmd::error::Error::UnknownFlag("-r".to_owned()));
+
+        let defaulted = OptionalNextValue::parse(&["-l"]).unwrap();
+        assert_eq!(defaulted.lines.as_deref(), Some("1"));
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "optional-numeric-next",
+        style = "gnu",
+        tag(optional_numeric_next_values = "number=5")
+    )]
+    struct OptionalNumericNextValue {
+        #[flag(short = 'n', long = "number-lines")]
+        number: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_numeric_next_consumes_only_numbering_specs() {
+        let width = OptionalNumericNextValue::parse(&["-n", "2", "file"]).unwrap();
+        assert_eq!(width.number.as_deref(), Some("2"));
+        assert_eq!(&*width.args, &["file"]);
+
+        let separator = OptionalNumericNextValue::parse(&["-n", "c3", "file"]).unwrap();
+        assert_eq!(separator.number.as_deref(), Some("c3"));
+        assert_eq!(&*separator.args, &["file"]);
+
+        let defaulted = OptionalNumericNextValue::parse(&["-n", "file"]).unwrap();
+        assert_eq!(defaulted.number.as_deref(), Some("5"));
+        assert_eq!(&*defaulted.args, &["file"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "numeric-next",
+        style = "gnu",
+        tag(numeric_next_values = "number=5")
+    )]
+    struct NumericNextValue {
+        #[flag(short = 'a')]
+        all: bool,
+        #[flag(short = 'n', long = "number-lines")]
+        number: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn numeric_next_requires_and_selectively_consumes_numbering_specs() {
+        let width = NumericNextValue::parse(&["-n", "2", "file"]).unwrap();
+        assert_eq!(width.number.as_deref(), Some("2"));
+        assert_eq!(&*width.args, &["file"]);
+
+        let separator = NumericNextValue::parse(&["-n", "c3", "file"]).unwrap();
+        assert_eq!(separator.number.as_deref(), Some("c3"));
+        assert_eq!(&*separator.args, &["file"]);
+
+        let attached = NumericNextValue::parse(&["-na", "file"]).unwrap();
+        assert_eq!(attached.number.as_deref(), Some("a"));
+        assert_eq!(&*attached.args, &["file"]);
+
+        let clustered = NumericNextValue::parse(&["-an", "-x", "file"]).unwrap();
+        assert_eq!(clustered.number.as_deref(), Some("-x"));
+        assert_eq!(&*clustered.args, &["file"]);
+
+        let missing = NumericNextValue::parse(&["-n"]).unwrap_err();
+        assert_eq!(missing, ecmd::error::Error::MissingValue("-n".to_owned()));
+
+        let filename = NumericNextValue::parse(&["-n", "file"]).unwrap();
+        assert_eq!(filename.number.as_deref(), Some("5"));
+        assert_eq!(&*filename.args, &["file"]);
+
+        let long = NumericNextValue::parse(&["--number-lines", "c3", "file"]).unwrap();
+        assert_eq!(long.number.as_deref(), Some("c3"));
+        assert_eq!(&*long.args, &["file"]);
+
+        let long_filename = NumericNextValue::parse(&["--number-lines", "file"]).unwrap();
+        assert_eq!(long_filename.number.as_deref(), Some("file"));
+        assert!(long_filename.args.is_empty());
+
+        let long_option = NumericNextValue::parse(&["--number-lines", "-x", "file"]).unwrap();
+        assert_eq!(long_option.number.as_deref(), Some("-x"));
+        assert_eq!(&*long_option.args, &["file"]);
+
+        let long_missing = NumericNextValue::parse(&["--number-lines"]).unwrap_err();
+        assert_eq!(
+            long_missing,
+            ecmd::error::Error::MissingValue("--number-lines".to_owned())
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "exact-short-default",
+        style = "gnu",
+        tag(exact_short_defaults = "expand=8")
+    )]
+    struct ExactShortDefault {
+        #[flag(short = 'a')]
+        all: bool,
+        #[flag(short = 'e', long = "expand")]
+        expand: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn exact_short_default_does_not_weaken_clustered_or_long_values() {
+        let exact = ExactShortDefault::parse(&["-e", "file"]).unwrap();
+        assert_eq!(exact.expand.as_deref(), Some("8"));
+        assert_eq!(&*exact.args, &["file"]);
+
+        let clustered = ExactShortDefault::parse(&["-ae", "X", "file"]).unwrap();
+        assert_eq!(clustered.expand.as_deref(), Some("X"));
+        assert_eq!(&*clustered.args, &["file"]);
+
+        let clustered_missing = ExactShortDefault::parse(&["-ae"]).unwrap_err();
+        assert_eq!(
+            clustered_missing,
+            ecmd::error::Error::MissingValue("-e".to_owned())
+        );
+
+        let long = ExactShortDefault::parse(&["--expand", "X", "file"]).unwrap();
+        assert_eq!(long.expand.as_deref(), Some("X"));
+        assert_eq!(&*long.args, &["file"]);
+
+        let long_missing = ExactShortDefault::parse(&["--expand"]).unwrap_err();
+        assert_eq!(
+            long_missing,
+            ecmd::error::Error::MissingValue("--expand".to_owned())
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "dense-flags",
+        style = "gnu",
+        tag(optional_values = "unified=3,context=3"),
+        tag(prefixed_values = "unified,context"),
+        tag(exclusive_flags = "unified;context;side")
+    )]
+    struct DenseFlags {
+        #[flag(short = 'u', long = "unified")]
+        unified: Option<String>,
+        #[flag(short = 'c', long = "context")]
+        context: Option<String>,
+        #[flag(short = 'y', long = "side-by-side")]
+        side: bool,
+        args: Operands,
+    }
+
+    #[test]
+    fn prefixed_value_tag_accepts_value_before_short_flag() {
+        let command = DenseFlags::parse(&["-12u", "left", "right"]).unwrap();
+        assert_eq!(command.unified.as_deref(), Some("12"));
+        assert_eq!(&*command.args, &["left", "right"]);
+    }
+
+    #[test]
+    fn exclusive_flags_report_the_flag_that_created_the_conflict() {
+        assert_eq!(
+            DenseFlags::parse(&["-u", "-y"]).unwrap_err(),
+            ecmd::error::Error::ConflictingFlags {
+                current: "-y".to_owned(),
+                previous: "-u".to_owned(),
+            }
+        );
+        assert_eq!(
+            DenseFlags::parse(&["--side-by-side", "--context=2"]).unwrap_err(),
+            ecmd::error::Error::ConflictingFlags {
+                current: "--context".to_owned(),
+                previous: "-y".to_owned(),
+            }
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "optional-any-next",
+        style = "gnu",
+        tag(optional_any_next_values = "context=3")
+    )]
+    struct OptionalAnyNext {
+        #[flag(short = 'C')]
+        context: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn optional_any_next_uses_default_only_at_end_of_arguments() {
+        let defaulted = OptionalAnyNext::parse(&["-C"]).unwrap();
+        assert_eq!(defaulted.context.as_deref(), Some("3"));
+
+        let consumed = OptionalAnyNext::parse(&["-C", "-q"]).unwrap();
+        assert_eq!(consumed.context.as_deref(), Some("-q"));
+        assert!(consumed.args.is_empty());
+    }
+
+    #[derive(Command, Debug)]
+    #[command(name = "attached", style = "gnu", tag(attached_values = "level"))]
+    struct AttachedValue {
+        #[flag(short = 'O')]
+        level: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn attached_value_tag_rejects_a_separated_short_value() {
+        let command = AttachedValue::parse(&["-O3", "path"]).unwrap();
+        assert_eq!(command.level.as_deref(), Some("3"));
+        assert_eq!(&*command.args, &["path"]);
+        assert_eq!(
+            AttachedValue::parse(&["-O", "3", "path"]).unwrap_err(),
+            ecmd::error::Error::MissingValue("-O".to_owned())
+        );
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "separated",
+        style = "gnu",
+        lenient,
+        no_permute,
+        tag(separated_values = "device")
+    )]
+    struct SeparatedValue {
+        #[flag(short = 'F', long = "file")]
+        device: Option<String>,
+        #[flag(short = 'a', long = "all")]
+        all: bool,
+        args: Operands,
+    }
+
+    #[test]
+    fn separated_value_tag_leaves_an_attached_short_token_intact() {
+        let separated = SeparatedValue::parse(&["-F", "device"]).unwrap();
+        assert_eq!(separated.device.as_deref(), Some("device"));
+        assert!(!separated.all);
+        assert!(separated.args.is_empty());
+
+        let attached = SeparatedValue::parse(&["-Fdevice", "-a"]).unwrap();
+        assert_eq!(attached.device, None);
+        assert!(!attached.all);
+        assert_eq!(&*attached.args, &["-Fdevice", "-a"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "numeric-first",
+        style = "gnu",
+        tag(first_numeric_value = "width")
+    )]
+    struct NumericFirstValue {
+        #[flag(short = 'w', long = "width", value_name = "WIDTH")]
+        width: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn first_numeric_value_tag_captures_a_leading_obsolete_value() {
+        let command = NumericFirstValue::parse(&["-12", "file"]).unwrap();
+        assert_eq!(command.width.as_deref(), Some("12"));
+        assert_eq!(&*command.args, &["file"]);
+
+        let malformed = NumericFirstValue::parse(&["-12x"]).unwrap();
+        assert_eq!(malformed.width.as_deref(), Some("12x"));
+    }
+
+    #[test]
+    fn first_numeric_value_tag_rejects_the_obsolete_form_later() {
+        let error = NumericFirstValue::parse(&["file", "-12"]).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid option -- 1; -WIDTH is recognized only when it is the first\noption; use -w N instead"
+        );
+    }
+
+    #[test]
+    fn first_numeric_value_tag_leaves_values_after_double_dash_as_operands() {
+        let command = NumericFirstValue::parse(&["--", "-12"]).unwrap();
+        assert_eq!(command.width, None);
+        assert_eq!(&*command.args, &["-12"]);
+    }
+
+    #[test]
+    fn first_numeric_value_tag_keeps_zero_and_overflow_as_operands() {
+        let zero = NumericFirstValue::parse(&["-0"]).unwrap();
+        assert_eq!(zero.width, None);
+        assert_eq!(&*zero.args, &["-0"]);
+
+        let overflow = NumericFirstValue::parse(&["-999999999999999999999"]).unwrap();
+        assert_eq!(overflow.width, None);
+        assert_eq!(&*overflow.args, &["-999999999999999999999"]);
+    }
+
+    #[derive(Command, Debug)]
+    #[command(
+        name = "legacy-numeric-operands",
+        style = "gnu",
+        tag(numeric_operands = "columns=-,pages=+")
+    )]
+    struct LegacyNumericOperands {
+        #[flag(long = "columns")]
+        columns: Option<String>,
+        #[flag(long = "pages")]
+        pages: Option<String>,
+        args: Operands,
+    }
+
+    #[test]
+    fn numeric_operand_tag_captures_whole_tokens_before_the_terminator() {
+        let command = LegacyNumericOperands::parse(&["file", "-3", "+2:4"]).unwrap();
+        assert_eq!(command.columns.as_deref(), Some("3"));
+        assert_eq!(command.pages.as_deref(), Some("2:4"));
+        assert_eq!(&*command.args, &["file"]);
+
+        let shielded = LegacyNumericOperands::parse(&["--", "-3", "+2"]).unwrap();
+        assert_eq!(shielded.columns, None);
+        assert_eq!(shielded.pages, None);
+        assert_eq!(&*shielded.args, &["-3", "+2"]);
+    }
+
+    #[test]
+    fn numeric_operand_tag_ignores_later_values_and_keeps_malformed_tokens() {
+        let command = LegacyNumericOperands::parse(&["-2", "-4", "+3", "+5", "-0", "+x"]).unwrap();
+        assert_eq!(command.columns.as_deref(), Some("2"));
+        assert_eq!(command.pages.as_deref(), Some("3"));
+        assert_eq!(&*command.args, &["+x"]);
     }
 
     #[test]

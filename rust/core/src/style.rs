@@ -17,13 +17,55 @@ pub enum Style {
     Gnu,
 }
 
+/// Controls which help dialect [`crate::meta::CommandDef::help`] renders.
+///
+/// Independent of [`Style`]: commands sharing a parsing convention may answer
+/// to references that print help in different shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[non_exhaustive]
+pub enum HelpStyle {
+    /// `name: usage` with an indented body, as bash prints its builtins.
+    #[default]
+    Bash,
+    /// `Usage:` line, then tab-separated options, as GNU coreutils prints.
+    Gnu,
+    /// `Usage:`, `Arguments:`, and a column-aligned `Options:`, as clap prints.
+    Clap,
+    /// Like [`Self::Clap`], with each description on the line below its label.
+    ClapWide,
+    /// A leading blank, `Usage:` alone, and a `(1)` trailer, as util-linux prints.
+    UtilLinux,
+}
+
+impl HelpStyle {
+    /// The dialect a command renders when it declares no explicit help style.
+    #[must_use]
+    pub const fn from_parse_style(style: Style) -> Self {
+        match style {
+            Style::Posix => Self::Bash,
+            Style::Gnu => Self::Gnu,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Style;
+    use super::{HelpStyle, Style};
 
     #[test]
     fn default_is_posix() {
         assert_eq!(Style::default(), Style::Posix);
+    }
+
+    #[test]
+    fn help_style_defaults_follow_the_parse_style() {
+        assert_eq!(HelpStyle::from_parse_style(Style::Posix), HelpStyle::Bash);
+        assert_eq!(HelpStyle::from_parse_style(Style::Gnu), HelpStyle::Gnu);
+        assert_eq!(HelpStyle::default(), HelpStyle::Bash);
     }
 
     #[test]

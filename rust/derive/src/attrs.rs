@@ -12,6 +12,7 @@ use syn::{Expr, Field, Ident, Lit, Token};
 pub struct CommandAttrs {
     pub name: String,
     pub style: String,
+    pub help_style: Option<String>,
     pub lenient: bool,
     pub noop: String,
     pub tags: Vec<(String, String)>,
@@ -26,6 +27,7 @@ impl CommandAttrs {
     pub fn from_ast(attrs: &[syn::Attribute]) -> syn::Result<Self> {
         let mut name = String::new();
         let mut style = "posix".to_owned();
+        let mut help_style: Option<String> = None;
         let mut lenient = false;
         let mut noop = String::new();
         let mut tags = Vec::new();
@@ -41,6 +43,8 @@ impl CommandAttrs {
                     name = parse_lit_str(&meta)?;
                 } else if meta.path.is_ident("style") {
                     style = parse_lit_str(&meta)?;
+                } else if meta.path.is_ident("help_style") {
+                    help_style = Some(parse_lit_str(&meta)?);
                 } else if meta.path.is_ident("lenient") {
                     lenient = true;
                 } else if meta.path.is_ident("no_permute") {
@@ -90,6 +94,7 @@ impl CommandAttrs {
         Ok(Self {
             name,
             style,
+            help_style,
             lenient,
             noop,
             tags,
@@ -113,6 +118,47 @@ pub struct FlagAttrs {
     pub implemented: bool,
     pub repeat: RepeatAttr,
     pub allow_hyphen_values: bool,
+    pub possible_values: Vec<String>,
+    pub help_values: Vec<String>,
+    pub default_value: String,
+    pub help_label: String,
+    pub visible_aliases: Vec<String>,
+}
+
+/// Help presentation for a positional or rest field, from `#[operand(...)]`.
+#[derive(Default)]
+pub struct OperandAttrs {
+    pub label: String,
+    pub default_value: String,
+    pub hidden: bool,
+    pub required: bool,
+    pub spread: bool,
+}
+
+impl OperandAttrs {
+    pub fn from_field(field: &Field) -> syn::Result<Self> {
+        let Some(attr) = field.attrs.iter().find(|a| a.path().is_ident("operand")) else {
+            return Ok(Self::default());
+        };
+        let mut attrs = Self::default();
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("label") {
+                attrs.label = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("default") {
+                attrs.default_value = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("hide") {
+                attrs.hidden = true;
+            } else if meta.path.is_ident("required") {
+                attrs.required = true;
+            } else if meta.path.is_ident("spread") {
+                attrs.spread = true;
+            } else {
+                return Err(meta.error("unknown operand attribute"));
+            }
+            Ok(())
+        })?;
+        Ok(attrs)
+    }
 }
 
 /// Per-flag override for command occurrence policy
@@ -137,9 +183,32 @@ impl FlagAttrs {
         let mut implemented = true;
         let mut repeat = RepeatAttr::Default;
         let mut allow_hyphen_values = true;
+        let mut possible_values: Vec<String> = Vec::new();
+        let mut help_values: Vec<String> = Vec::new();
+        let mut default_value = String::new();
+        let mut help_label = String::new();
+        let mut visible_aliases: Vec<String> = Vec::new();
 
         attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("short") {
+            if meta.path.is_ident("help_values") {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let items = content
+                    .parse_terminated(<syn::LitStr as syn::parse::Parse>::parse, Token![,])?;
+                help_values.extend(items.into_iter().map(|item| item.value()));
+            } else if meta.path.is_ident("values") {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let items = content
+                    .parse_terminated(<syn::LitStr as syn::parse::Parse>::parse, Token![,])?;
+                possible_values.extend(items.into_iter().map(|item| item.value()));
+            } else if meta.path.is_ident("default") {
+                default_value = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("help_label") {
+                help_label = parse_lit_str(&meta)?;
+            } else if meta.path.is_ident("visible_alias") {
+                visible_aliases.push(parse_lit_str(&meta)?);
+            } else if meta.path.is_ident("short") {
                 short = parse_lit_char(&meta)?;
             } else if meta.path.is_ident("clears") {
                 let content;
@@ -183,6 +252,11 @@ impl FlagAttrs {
             implemented,
             repeat,
             allow_hyphen_values,
+            possible_values,
+            help_values,
+            default_value,
+            help_label,
+            visible_aliases,
         }))
     }
 }
@@ -222,6 +296,8 @@ fn extract_doc_lines(attrs: &[syn::Attribute]) -> Vec<String> {
             None
         })
         .map(|s| s.strip_prefix(' ').unwrap_or(&s).to_owned())
+        // an exact bare fence keeps rustdoc from reading an indented help block as a doctest
+        .filter(|line| line != "```text" && line != "```")
         .collect()
 }
 
@@ -266,7 +342,7 @@ fn parse_sections(lines: &[String]) -> DocSections {
                 } else if about.is_empty() {
                     trimmed.clone_into(&mut about);
                 } else {
-                    about.push(' ');
+                    about.push('\n');
                     about.push_str(trimmed);
                 }
             }
@@ -274,21 +350,21 @@ fn parse_sections(lines: &[String]) -> DocSections {
                 description.push(if trimmed.is_empty() {
                     String::new()
                 } else {
-                    trimmed.to_owned()
+                    line.clone()
                 });
             }
             DocState::Extra => {
                 extra.push(if trimmed.is_empty() {
                     String::new()
                 } else {
-                    trimmed.to_owned()
+                    line.clone()
                 });
             }
             DocState::ExitStatus => {
                 exit_status.push(if trimmed.is_empty() {
                     String::new()
                 } else {
-                    trimmed.to_owned()
+                    line.clone()
                 });
             }
         }

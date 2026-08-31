@@ -76,6 +76,38 @@ pub struct FlagDef<S: Storage = Static> {
     pub repeatable: bool,
     /// Whether a separated value may begin with a hyphen.
     pub allow_hyphen_values: bool,
+    /// The accepted values, when the flag admits only a fixed set.
+    pub possible_values: S::List<S::Text>,
+    /// The values help lists, when they differ from the accepted set.
+    pub help_values: S::List<S::Text>,
+    /// The value used when the flag is absent; none when empty.
+    pub default_value: S::Text,
+    /// Replaces the generated label in help; generated when empty.
+    pub help_label: S::Text,
+    /// Aliases help lists; parsing accepts these as well as `aliases`.
+    pub visible_aliases: S::List<S::Text>,
+}
+
+impl FlagDef<Static> {
+    /// A zero-valued base so a literal survives new fields being added
+    pub const EMPTY: Self = Self {
+        ch: '\0',
+        long: "",
+        aliases: &[],
+        kind: FlagKind::Bool,
+        clears: &[],
+        desc: "",
+        value_name: "",
+        hidden: false,
+        implemented: false,
+        repeatable: false,
+        allow_hyphen_values: false,
+        possible_values: &[],
+        help_values: &[],
+        default_value: "",
+        help_label: "",
+        visible_aliases: &[],
+    };
 }
 
 impl FlagDef<Static> {
@@ -96,6 +128,23 @@ impl FlagDef<Static> {
             implemented: self.implemented,
             repeatable: self.repeatable,
             allow_hyphen_values: self.allow_hyphen_values,
+            possible_values: self
+                .possible_values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            help_values: self
+                .help_values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            default_value: self.default_value.to_owned(),
+            help_label: self.help_label.to_owned(),
+            visible_aliases: self
+                .visible_aliases
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
         }
     }
 }
@@ -191,13 +240,23 @@ pub(crate) fn scan_with_policy<S: Storage, P: Storage>(
             break;
         }
         if gnu && is_long(arg) {
+            let operand_count = result.operands.len();
             let spec = arg.strip_prefix("--").unwrap_or_default();
-            process_long(spec, &mut cursor, &config, &mut result)?;
+            if let Err(error) = process_long(spec, &mut cursor, &config, &mut result) {
+                pass_unknown_long(error, arg, on_unknown, &mut result.operands)?;
+            }
+            if !permute && result.operands.len() > operand_count {
+                break;
+            }
             continue;
         }
         match classify(arg, has_polarity) {
             ArgClass::Flags(polarity, chars) => {
+                let operand_count = result.operands.len();
                 process_cluster(chars, polarity, &mut cursor, &config, &mut result)?;
+                if !permute && result.operands.len() > operand_count {
+                    break;
+                }
             }
             // GNU permutation: an operand does not stop option scanning. With
             // `permute` off (POSIX order, e.g. `basename`), the first operand does.
@@ -218,6 +277,20 @@ pub(crate) fn scan_with_policy<S: Storage, P: Storage>(
             .any(|flag| flag.ch == parsed_char(parsed) && flag.kind == FlagKind::Noop)
     });
     Ok(result)
+}
+
+fn pass_unknown_long(
+    error: Error,
+    arg: &str,
+    on_unknown: OnUnknown,
+    operands: &mut Vec<String>,
+) -> Result<(), Error> {
+    if on_unknown == OnUnknown::PassThrough && matches!(error, Error::UnknownFlag(_)) {
+        operands.push(arg.to_owned());
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 pub(crate) struct Policy<'a, S: Storage> {
@@ -299,11 +372,7 @@ fn process_first_numeric<S: Storage, P: Storage>(
     config: &ScanConfig<'_, S, P>,
     result: &mut ScanResult,
 ) -> Result<bool, Error> {
-    let Some(ch) = config
-        .policy
-        .first_numeric_value
-        .filter(|_| cursor.at_start())
-    else {
+    let Some(ch) = config.policy.first_numeric_value else {
         return Ok(false);
     };
     let Some(value) = first_numeric_value(arg) else {
@@ -314,6 +383,13 @@ fn process_first_numeric<S: Storage, P: Storage>(
     };
     if first_numeric_is_operand(value) {
         result.operands.push(arg.to_owned());
+    } else if !cursor.at_start() {
+        let option = value.chars().next().unwrap_or_default();
+        return Err(Error::FirstNumericValue {
+            option,
+            flag: ch,
+            value_name: def.value_name.as_ref().to_owned(),
+        });
     } else {
         record_unimplemented(def, arg, result);
         reject_repeat(def, result, arg, config.style)?;
@@ -350,6 +426,14 @@ fn process_numeric_operand<S: Storage, P: Storage>(
     let Some(def) = find_flag(rule.ch, config.flags) else {
         return Ok(false);
     };
+    if result
+        .flags
+        .iter()
+        .any(|parsed| parsed_char(parsed) == rule.ch)
+    {
+        cursor.advance();
+        return Ok(true);
+    }
     record_unimplemented(def, arg, result);
     reject_repeat(def, result, arg, config.style)?;
     result.flags.push(Parsed::Value(rule.ch, value.to_owned()));
@@ -469,14 +553,7 @@ fn process_cluster<S: Storage, P: Storage>(
     if process_prefixed_value(chars, polarity, cursor, config, result)? {
         return Ok(());
     }
-    if try_passthrough(
-        chars,
-        cursor,
-        config.flags,
-        config.on_unknown,
-        config.style,
-        &mut result.operands,
-    ) {
+    if try_passthrough(chars, cursor, config, &mut result.operands) {
         return Ok(());
     }
     parse_known_cluster(chars, polarity, cursor, config, result)
@@ -513,18 +590,16 @@ fn process_prefixed_value<S: Storage, P: Storage>(
     Ok(true)
 }
 
-fn try_passthrough<S: Storage>(
+fn try_passthrough<S: Storage, P: Storage>(
     chars: &str,
     cursor: &mut Cursor<'_>,
-    flags: &[FlagDef<S>],
-    on_unknown: OnUnknown,
-    style: Style,
+    config: &ScanConfig<'_, S, P>,
     operands: &mut Vec<String>,
 ) -> bool {
-    if on_unknown != OnUnknown::PassThrough {
+    if config.on_unknown != OnUnknown::PassThrough {
         return false;
     }
-    if !has_unknown_flag(chars, flags, style) {
+    if !has_unknown_flag(chars, config) {
         return false;
     }
     if let Some(full_arg) = cursor.peek() {
@@ -534,12 +609,16 @@ fn try_passthrough<S: Storage>(
     true
 }
 
-fn has_unknown_flag<S: Storage>(chars: &str, flags: &[FlagDef<S>], style: Style) -> bool {
-    for &b in chars.as_bytes() {
-        match find_flag(char::from(b), flags) {
-            None if implicit_short_action(char::from(b), style).is_some() => {}
+fn has_unknown_flag<S: Storage, P: Storage>(chars: &str, config: &ScanConfig<'_, S, P>) -> bool {
+    for (index, &b) in chars.as_bytes().iter().enumerate() {
+        match find_flag(char::from(b), config.flags) {
+            None if implicit_short_action(char::from(b), config.style, config.flags).is_some() => {}
             None => return true,
             Some(def) if matches!(def.kind, FlagKind::Value | FlagKind::PolarValue) => {
+                if index.saturating_add(1) < chars.len() && config.policy.requires_separated(def.ch)
+                {
+                    return true;
+                }
                 return false;
             }
             _ => {}
@@ -558,7 +637,7 @@ fn parse_known_cluster<S: Storage, P: Storage>(
     for (bi, &byte) in chars.as_bytes().iter().enumerate() {
         let ch = char::from(byte);
         let Some(def) = find_flag(ch, config.flags) else {
-            return Err(implicit_short_action(ch, config.style)
+            return Err(implicit_short_action(ch, config.style, config.flags)
                 .unwrap_or_else(|| Error::UnknownFlag(format!("-{ch}"))));
         };
         if !def.implemented {
@@ -592,15 +671,25 @@ fn parse_known_cluster<S: Storage, P: Storage>(
     Ok(())
 }
 
-fn implicit_short_action(ch: char, style: Style) -> Option<Error> {
+fn implicit_short_action<S: Storage>(
+    ch: char,
+    style: Style,
+    flags: &[FlagDef<S>],
+) -> Option<Error> {
     if style != Style::Gnu {
         return None;
     }
     match ch {
         'h' => Some(Error::HelpRequested),
-        'V' => Some(Error::VersionRequested),
+        'V' if !no_implicit_version(flags) => Some(Error::VersionRequested),
         _ => None,
     }
+}
+
+fn no_implicit_version<S: Storage>(flags: &[FlagDef<S>]) -> bool {
+    flags
+        .iter()
+        .any(|flag| flag.hidden && flag.long.as_ref() == "\0no-implicit-version")
 }
 
 fn extract_value<S: Storage, P: Storage>(
@@ -651,6 +740,10 @@ fn apply_short_value_rule<S: Storage, P: Storage>(
         ValueMode::NumericNextOrDefault => {
             take_numeric_next_or_default(cursor, rule.default.as_ref(), label)
         }
+        ValueMode::OptionalNumericNextOrDefault => Ok(take_optional_numeric_next_or_default(
+            cursor,
+            rule.default.as_ref(),
+        )),
         ValueMode::ExactShortDefault if exact => {
             Ok(advance_with_default(cursor, rule.default.as_ref()))
         }
@@ -718,6 +811,18 @@ fn take_numeric_next_or_default(
         }
         Some(_) => Ok(advance_with_default(cursor, default)),
         None => Err(Error::MissingValue(label.to_owned())),
+    }
+}
+
+fn take_optional_numeric_next_or_default(cursor: &mut Cursor<'_>, default: &str) -> String {
+    match cursor.following() {
+        Some(value) if is_numbering_spec(value) => {
+            let value = value.to_owned();
+            cursor.advance();
+            cursor.advance();
+            value
+        }
+        Some(_) | None => advance_with_default(cursor, default),
     }
 }
 
@@ -880,7 +985,7 @@ fn reject_latest_conflict<S: Storage, P: Storage>(
 }
 
 fn preferred_label<S: Storage>(def: &FlagDef<S>) -> String {
-    if def.long.as_ref().is_empty() {
+    if def.ch < '\u{E000}' {
         format!("-{}", def.ch)
     } else {
         format!("--{}", def.long.as_ref())
@@ -945,7 +1050,11 @@ fn apply_long_value<S: Storage, P: Storage>(
             take_long_next_or_default(cursor, config.flags, default, &label)?
         }
         (None, Some((ValueMode::NumericNextOrDefault, default))) => {
-            take_long_numeric_or_default(cursor, default, &label)?
+            let _ = default;
+            cursor.take_next(&label)?
+        }
+        (None, Some((ValueMode::OptionalNumericNextOrDefault, default))) => {
+            take_long_optional_numeric_or_default(cursor, default, &label)?
         }
         (None, Some((ValueMode::AnyNextOrDefault, default))) => {
             take_long_any_or_default(cursor, default, &label)?
@@ -986,15 +1095,14 @@ fn take_long_next_or_default<S: Storage>(
     }
 }
 
-fn take_long_numeric_or_default(
+fn take_long_optional_numeric_or_default(
     cursor: &mut Cursor<'_>,
     default: &str,
     label: &str,
 ) -> Result<String, Error> {
     match cursor.peek() {
         Some(value) if is_numbering_spec(value) => cursor.take_next(label),
-        Some(_) => Ok(default.to_owned()),
-        None => Err(Error::MissingValue(label.to_owned())),
+        Some(_) | None => Ok(default.to_owned()),
     }
 }
 
@@ -1038,6 +1146,14 @@ fn resolve_long<'a, S: Storage>(
 fn long_names<S: Storage>(flag: &FlagDef<S>) -> impl Iterator<Item = &str> {
     core::iter::once(flag.long.as_ref())
         .chain(flag.aliases.as_ref().iter().map(AsRef::as_ref))
+        .chain(
+            flag.visible_aliases
+                .as_ref()
+                .iter()
+                .map(AsRef::as_ref)
+                // a one-character alias names a short flag, so it is never a long option
+                .filter(|alias| alias.chars().count() > 1),
+        )
         .filter(|n| !n.is_empty())
 }
 
@@ -1094,6 +1210,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1110,6 +1231,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1126,6 +1252,32 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
+        }
+    }
+
+    fn no_implicit_version_marker() -> FlagDef {
+        FlagDef {
+            ch: '\0',
+            kind: FlagKind::Noop,
+            long: "\0no-implicit-version",
+            aliases: &[],
+            clears: &[],
+            desc: "",
+            value_name: "",
+            hidden: true,
+            implemented: true,
+            repeatable: false,
+            allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1142,6 +1294,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1344,6 +1501,15 @@ mod tests {
     }
 
     #[test]
+    fn no_implicit_version_marker_rejects_short_v_but_keeps_help() {
+        let flags = [no_implicit_version_marker()];
+        let result = scan(&["-V"], &flags, OnUnknown::Reject, Style::Gnu, true);
+        assert_eq!(result.unwrap_err(), Error::UnknownFlag("-V".to_owned()));
+        let result = scan(&["-h"], &flags, OnUnknown::Reject, Style::Gnu, true);
+        assert_eq!(result.unwrap_err(), Error::HelpRequested);
+    }
+
+    #[test]
     fn declared_gnu_short_help_and_version_characters_win() {
         let flags = [bool_flag('h'), bool_flag('V')];
         let result = scan(&["-hV"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
@@ -1488,6 +1654,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["-o", "errexit"],
@@ -1518,6 +1689,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["+o", "verbose"],
@@ -1548,6 +1724,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["-oerrexit"],
@@ -1579,6 +1760,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1595,6 +1781,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1852,6 +2043,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }
     }
 
@@ -1894,6 +2090,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         }];
         let r = scan(
             &["--presume-input-pipe"],

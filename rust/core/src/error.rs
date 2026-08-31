@@ -13,8 +13,8 @@ pub enum Error {
     UnimplementedFlag(String),
     /// A flag that requires a value was not given one.
     MissingValue(String),
-    /// A required positional argument was not provided.
-    MissingRequired(String),
+    /// One or more required positional arguments were not provided.
+    MissingRequired(Vec<String>),
     /// A flag's value could not be parsed into the expected type.
     InvalidValue {
         /// The flag that received the bad value.
@@ -30,25 +30,29 @@ pub enum Error {
     AmbiguousOption(String),
     /// A flag that takes no value was given one via `--flag=value`.
     UnexpectedValue {
-        /// The flag that received the value.
+        /// The flag that rejected the value.
         flag: String,
-        /// The unexpected value.
-        value: String,
-    },
-    /// Two mutually exclusive flags were supplied.
-    ConflictingFlags {
-        /// The flag that exposed the conflict.
-        current: String,
-        /// The conflicting earlier flag.
-        previous: String,
-    },
-    /// A command rejected its first numeric shorthand.
-    FirstNumericValue {
-        /// The rejected numeric token.
+        /// The value that was provided.
         value: String,
     },
     /// A scalar flag was supplied more than once.
     RepeatedFlag(String),
+    /// A flag was combined with a mutually exclusive flag.
+    ConflictingFlags {
+        /// The flag that created the conflict.
+        current: String,
+        /// The previously parsed flag.
+        previous: String,
+    },
+    /// An obsolete numeric value appeared after the first argument.
+    FirstNumericValue {
+        /// The option character reported by the command.
+        option: char,
+        /// The regular valued flag that replaces the obsolete form.
+        flag: char,
+        /// The obsolete value placeholder.
+        value_name: String,
+    },
     /// `--help` was requested; the caller should print help and exit 0.
     HelpRequested,
     /// `--version` was requested; the caller should print the version and exit 0.
@@ -63,8 +67,8 @@ impl fmt::Display for Error {
             Self::MissingValue(flag) => {
                 write!(f, "{flag}: option requires an argument")
             }
-            Self::MissingRequired(name) => {
-                write!(f, "missing required argument: {name}")
+            Self::MissingRequired(names) => {
+                write!(f, "missing required argument: {}", names.join(", "))
             }
             Self::InvalidValue {
                 flag,
@@ -76,11 +80,18 @@ impl fmt::Display for Error {
             Self::UnexpectedValue { flag, .. } => {
                 write!(f, "{flag}: option doesn't allow an argument")
             }
+            Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
             Self::ConflictingFlags { current, previous } => {
                 write!(f, "{current} conflicts with {previous}")
             }
-            Self::FirstNumericValue { value } => write!(f, "invalid number: {value}"),
-            Self::RepeatedFlag(name) => write!(f, "{name}: option cannot be used multiple times"),
+            Self::FirstNumericValue {
+                option,
+                flag,
+                value_name,
+            } => write!(
+                f,
+                "invalid option -- {option}; -{value_name} is recognized only when it is the first\noption; use -{flag} N instead"
+            ),
             Self::HelpRequested => write!(f, "help requested"),
             Self::VersionRequested => write!(f, "version requested"),
         }
@@ -118,8 +129,14 @@ mod tests {
 
     #[test]
     fn missing_required_displays_correctly() {
-        let e = Error::MissingRequired("target".into());
+        let e = Error::MissingRequired(vec!["target".into()]);
         assert_eq!(e.to_string(), "missing required argument: target");
+    }
+
+    #[test]
+    fn missing_required_displays_all_names() {
+        let e = Error::MissingRequired(vec!["file1".into(), "file2".into()]);
+        assert_eq!(e.to_string(), "missing required argument: file1, file2");
     }
 
     #[test]

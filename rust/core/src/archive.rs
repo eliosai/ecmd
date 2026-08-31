@@ -7,7 +7,7 @@ use crate::meta::{CommandDef, Owned, PositionalDef};
 use crate::parse::FlagDef;
 use crate::parse::{FlagKind, OnUnknown};
 use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
-use crate::style::Style;
+use crate::style::{HelpStyle, Style};
 
 /// Archive adapter for an owned flag definition
 #[derive(Archive, Serialize, Deserialize)]
@@ -24,6 +24,11 @@ pub struct FlagDefDef {
     implemented: bool,
     repeatable: bool,
     allow_hyphen_values: bool,
+    possible_values: Vec<String>,
+    help_values: Vec<String>,
+    default_value: String,
+    help_label: String,
+    visible_aliases: Vec<String>,
 }
 
 impl From<FlagDefDef> for FlagDef<Owned> {
@@ -40,6 +45,11 @@ impl From<FlagDefDef> for FlagDef<Owned> {
             implemented: value.implemented,
             repeatable: value.repeatable,
             allow_hyphen_values: value.allow_hyphen_values,
+            possible_values: value.possible_values,
+            help_values: value.help_values,
+            default_value: value.default_value,
+            help_label: value.help_label,
+            visible_aliases: value.visible_aliases,
         }
     }
 }
@@ -51,6 +61,10 @@ pub struct PositionalDefDef {
     name: String,
     required: bool,
     desc: String,
+    label: String,
+    default_value: String,
+    hidden: bool,
+    spread: bool,
 }
 
 /// Archive adapter for an owned value rule
@@ -78,6 +92,10 @@ impl From<PositionalDefDef> for PositionalDef<Owned> {
             name: value.name,
             required: value.required,
             desc: value.desc,
+            label: value.label,
+            default_value: value.default_value,
+            hidden: value.hidden,
+            spread: value.spread,
         }
     }
 }
@@ -90,6 +108,7 @@ pub struct CommandDefDef {
     about: String,
     short_doc: String,
     style: Style,
+    help_style: HelpStyle,
     on_unknown: OnUnknown,
     permute: bool,
     #[rkyv(with = Map<FlagDefDef>)]
@@ -97,6 +116,11 @@ pub struct CommandDefDef {
     #[rkyv(with = Map<PositionalDefDef>)]
     positionals: Vec<PositionalDef<Owned>>,
     has_rest: bool,
+    rest_label: String,
+    rest_hidden: bool,
+    rest_desc: String,
+    rest_default: String,
+    rest_required: bool,
     #[rkyv(with = Map<ValueRuleDef>)]
     value_rules: Vec<ValueRule<Owned>>,
     numeric_operands: Vec<NumericOperandRule>,
@@ -120,11 +144,17 @@ impl From<CommandDefDef> for CommandDef<Owned> {
             about: value.about,
             short_doc: value.short_doc,
             style: value.style,
+            help_style: value.help_style,
             on_unknown: value.on_unknown,
             permute: value.permute,
             flags: value.flags,
             positionals: value.positionals,
             has_rest: value.has_rest,
+            rest_label: value.rest_label,
+            rest_hidden: value.rest_hidden,
+            rest_desc: value.rest_desc,
+            rest_default: value.rest_default,
+            rest_required: value.rest_required,
             value_rules: value.value_rules,
             numeric_operands: value.numeric_operands,
             first_numeric_value: value.first_numeric_value,
@@ -150,7 +180,7 @@ mod tests {
     use crate::meta::{CommandDef, Owned};
     use crate::parse::{FlagDef, FlagKind, OnUnknown};
     use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
-    use crate::style::Style;
+    use crate::style::{HelpStyle, Style};
 
     #[test]
     fn owned_command_definition_round_trips() {
@@ -159,6 +189,7 @@ mod tests {
             about: "Print a greeting".to_owned(),
             short_doc: String::new(),
             style: Style::Posix,
+            help_style: HelpStyle::Bash,
             on_unknown: OnUnknown::Reject,
             permute: false,
             flags: vec![FlagDef {
@@ -173,9 +204,19 @@ mod tests {
                 implemented: false,
                 repeatable: false,
                 allow_hyphen_values: true,
+                possible_values: Vec::new(),
+                help_values: Vec::new(),
+                default_value: String::new(),
+                help_label: String::new(),
+                visible_aliases: Vec::new(),
             }],
             positionals: Vec::new(),
             has_rest: true,
+            rest_label: "ARGS".to_owned(),
+            rest_hidden: false,
+            rest_desc: "Additional values".to_owned(),
+            rest_default: String::new(),
+            rest_required: false,
             value_rules: vec![ValueRule {
                 ch: 'f',
                 mode: ValueMode::AttachedOrDefault,

@@ -16,6 +16,8 @@ pub enum ValueMode {
     NextOrDefault,
     /// Consume a following numeric value or use the default
     NumericNextOrDefault,
+    /// Optionally consume a following numeric value or use the default
+    OptionalNumericNextOrDefault,
     /// Use the default only for an exact short option
     ExactShortDefault,
     /// Consume any following token or use the default

@@ -27,11 +27,13 @@
 //! Two optional attributes on `#[command()]`:
 //! - `short_doc = "..."` — overrides auto-generated usage in help display
 //! - `extra_help("line", ...)` — tab-formatted content (replaces doc extra)
+//!
+//! `tag(verbatim_help)` emits the `# Options` block as the whole help page.
 
 use crate::error::Error;
 use crate::parse::{FlagDef, FlagKind, OnUnknown};
 use crate::policy::{ExclusiveRule, NumericOperandRule, ValueRule};
-use crate::style::Style;
+use crate::style::{HelpStyle, Style};
 
 /// Storage used by command metadata
 pub trait Storage: 'static {
@@ -89,6 +91,8 @@ pub struct CommandDef<S: Storage = Static> {
     pub short_doc: S::Text,
     /// Parsing style.
     pub style: Style,
+    /// Help dialect rendered by [`CommandDef::help`].
+    pub help_style: HelpStyle,
     /// How unrecognized flags are handled.
     pub on_unknown: OnUnknown,
     /// Whether options may follow positional operands.
@@ -99,6 +103,16 @@ pub struct CommandDef<S: Storage = Static> {
     pub positionals: S::List<PositionalDef<S>>,
     /// Whether a rest-args (`Operands`) field exists.
     pub has_rest: bool,
+    /// Label for the rest slot in help; `args` when empty.
+    pub rest_label: S::Text,
+    /// Whether the rest slot is omitted from generated help.
+    pub rest_hidden: bool,
+    /// Description shown for the rest slot.
+    pub rest_desc: S::Text,
+    /// Value the rest slot reports when it is empty; none when empty.
+    pub rest_default: S::Text,
+    /// Whether the rest slot shows as required.
+    pub rest_required: bool,
     /// Missing-value behavior keyed by flag identity.
     pub value_rules: S::List<ValueRule<S>>,
     /// Legacy numeric operand routes.
@@ -127,6 +141,75 @@ pub struct CommandDef<S: Storage = Static> {
     pub exit_status: S::List<S::Text>,
 }
 
+impl CommandDef<Static> {
+    /// A zero-valued base so a literal survives new fields being added
+    pub const EMPTY: Self = Self {
+        name: "",
+        about: "",
+        short_doc: "",
+        style: Style::Posix,
+        help_style: HelpStyle::Bash,
+        on_unknown: OnUnknown::Reject,
+        permute: false,
+        flags: &[],
+        positionals: &[],
+        has_rest: false,
+        rest_label: "",
+        rest_hidden: false,
+        rest_desc: "",
+        rest_default: "",
+        rest_required: false,
+        value_rules: &[],
+        numeric_operands: &[],
+        first_numeric_value: None,
+        exact_long: false,
+        equals_only: &[],
+        attached_values: &[],
+        separated_values: &[],
+        prefixed_values: &[],
+        exclusive_groups: &[],
+        tags: &[],
+        description: &[],
+        extra: &[],
+        exit_status: &[],
+    };
+}
+
+impl Default for CommandDef<Owned> {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            about: String::new(),
+            short_doc: String::new(),
+            style: Style::Posix,
+            help_style: HelpStyle::Bash,
+            on_unknown: OnUnknown::Reject,
+            permute: false,
+            flags: Vec::new(),
+            positionals: Vec::new(),
+            has_rest: false,
+            rest_label: String::new(),
+            rest_hidden: false,
+            rest_desc: String::new(),
+            rest_default: String::new(),
+            rest_required: false,
+            value_rules: Vec::new(),
+            numeric_operands: Vec::new(),
+            first_numeric_value: None,
+            exact_long: false,
+            equals_only: Vec::new(),
+            attached_values: Vec::new(),
+            separated_values: Vec::new(),
+            prefixed_values: Vec::new(),
+            exclusive_groups: Vec::new(),
+            tags: Vec::new(),
+            description: Vec::new(),
+            extra: Vec::new(),
+            exit_status: Vec::new(),
+        }
+    }
+}
+
 /// Runtime-owned command metadata
 pub type OwnedCommandDef = CommandDef<Owned>;
 
@@ -143,6 +226,14 @@ pub struct PositionalDef<S: Storage = Static> {
     pub required: bool,
     /// Human-readable description (from doc comment).
     pub desc: S::Text,
+    /// Label shown in help; the field name when empty.
+    pub label: S::Text,
+    /// Value used when the argument is omitted; none when empty.
+    pub default_value: S::Text,
+    /// When true, omit from generated help.
+    pub hidden: bool,
+    /// Whether help shows the label as accepting more than one value.
+    pub spread: bool,
 }
 
 const INDENT: &str = "    ";
@@ -245,8 +336,15 @@ where
     /// Help text in the command's style: bash-builtin for POSIX, GNU for Gnu.
     #[must_use]
     pub fn help(&self) -> String {
-        if self.style == Style::Gnu {
-            return self.gnu_help();
+        // a bespoke page no dialect describes is authored whole and emitted untouched
+        if self.has_tag("verbatim_help") {
+            return self.verbatim_help();
+        }
+        match self.help_style {
+            HelpStyle::Gnu => return self.gnu_help(),
+            HelpStyle::Clap | HelpStyle::ClapWide => return self.clap_help(),
+            HelpStyle::UtilLinux => return self.util_linux_help(),
+            HelpStyle::Bash => {}
         }
         let mut out = String::with_capacity(512);
 
@@ -258,7 +356,9 @@ where
         };
         push_line(&mut out, "", &format!("{}: {sd}", self.name()));
 
-        push_line(&mut out, INDENT, self.about.as_ref());
+        for line in self.about.as_ref().lines() {
+            push_line(&mut out, INDENT, line);
+        }
 
         if !self.description.as_ref().is_empty() {
             push_empty(&mut out);
@@ -301,7 +401,345 @@ where
         out
     }
 
+    /// Clap-style help: about, `Usage:`, `Arguments:`, then aligned `Options:`.
+    ///
+    /// Line breaks come from the metadata verbatim; this never rewraps text.
+    fn clap_help(&self) -> String {
+        let mut out = String::with_capacity(512);
+        for line in self.about.as_ref().lines() {
+            out.push_str(line);
+            out.push('\n');
+        }
+        if !self.description.as_ref().is_empty() {
+            out.push('\n');
+        }
+        for line in self.description.as_ref() {
+            out.push_str(line.as_ref());
+            out.push('\n');
+        }
+        self.push_clap_usage(&mut out);
+        self.push_clap_arguments(&mut out);
+        self.push_clap_options(&mut out);
+        if !self.extra.as_ref().is_empty() {
+            out.push('\n');
+            for line in self.extra.as_ref() {
+                out.push_str(line.as_ref());
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// `Usage:` with any continuation lines indented under the first.
+    fn push_clap_usage(&self, out: &mut String) {
+        let short_doc = self.short_doc.as_ref();
+        let usage = if short_doc.is_empty() {
+            self.usage()
+        } else {
+            short_doc.to_owned()
+        };
+        out.push('\n');
+        for (index, line) in usage.lines().enumerate() {
+            out.push_str(if index == 0 { "Usage: " } else { "       " });
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    /// `Arguments:` listing declared positionals and the rest slot.
+    fn push_clap_arguments(&self, out: &mut String) {
+        let entries = self.clap_argument_entries();
+        if entries.is_empty() {
+            return;
+        }
+        out.push_str("\nArguments:\n");
+        if self.help_style == HelpStyle::ClapWide && self.spaced_help() {
+            push_wide_entries(out, &entries, false);
+        } else {
+            push_clap_entries(out, &entries);
+        }
+    }
+
+    /// One label and description per visible positional, rest slot last.
+    fn clap_argument_entries(&self) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String)> = self
+            .positionals
+            .as_ref()
+            .iter()
+            .filter(|positional| !positional.hidden)
+            .map(|positional| {
+                let label = positional.label.as_ref();
+                let label = if label.is_empty() {
+                    positional.name.as_ref()
+                } else {
+                    label
+                };
+                let tail = if positional.spread { "..." } else { "" };
+                let label = if positional.required {
+                    format!("<{label}>{tail}")
+                } else {
+                    format!("[{label}]{tail}")
+                };
+                (label, clap_argument_desc(positional))
+            })
+            .collect();
+        if self.has_rest && !self.rest_hidden {
+            let label = self.rest_label.as_ref();
+            let label = if label.is_empty() { "args" } else { label };
+            let label = if self.rest_required {
+                format!("<{label}>...")
+            } else {
+                format!("[{label}]...")
+            };
+            entries.push((label, self.rest_desc().to_owned()));
+        }
+        self.insert_arg_rows(&mut entries);
+        entries
+    }
+
+    /// Help-only positional rows from `arg_row` tags, each `INDEX\tLABEL\tDESC`.
+    fn insert_arg_rows(&self, entries: &mut Vec<(String, String)>) {
+        for (name, value) in self.tags() {
+            if name.as_ref() != "arg_row" {
+                continue;
+            }
+            let mut parts = value.as_ref().splitn(3, '\t');
+            let (Some(at), Some(label), Some(desc)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let at = at.parse().unwrap_or(entries.len()).min(entries.len());
+            entries.insert(at, (label.to_owned(), desc.to_owned()));
+        }
+    }
+
+    /// The rest slot's description, with clap's trailing default note.
+    fn rest_desc(&self) -> String {
+        let desc = self.rest_desc.as_ref();
+        let default = self.rest_default.as_ref();
+        match (desc.is_empty(), default.is_empty()) {
+            (_, true) => desc.to_owned(),
+            (true, false) => format!("[default: {default}]"),
+            (false, false) => format!("{desc} [default: {default}]"),
+        }
+    }
+
+    /// Whether help separates its entries with blank lines.
+    fn spaced_help(&self) -> bool {
+        self.tags()
+            .iter()
+            .any(|(name, _)| name.as_ref() == "help_spaced")
+    }
+
+    /// `Options:` aligned to the widest label, `--help` and `--version` last.
+    fn push_clap_options(&self, out: &mut String) {
+        let mut entries: Vec<(String, String)> = self
+            .flags()
+            .iter()
+            .filter(|flag| {
+                !matches!(flag.kind, FlagKind::Noop)
+                    && !flag.hidden
+                    && (self.help_style == HelpStyle::ClapWide
+                        || !flag.desc.as_ref().is_empty()
+                        || !flag.help_values.as_ref().is_empty())
+            })
+            .map(|flag| (clap_flag_label(flag), clap_flag_desc(flag)))
+            .collect();
+        let owns = |ch: char| self.flags().iter().any(|flag| flag.ch == ch);
+        let wording = |key: &str, fallback: &str| {
+            self.tags()
+                .iter()
+                .find_map(|(name, value)| (name.as_ref() == key).then(|| value.as_ref()))
+                .unwrap_or(fallback)
+                .to_owned()
+        };
+        entries.push((
+            if owns('h') {
+                "    --help".to_owned()
+            } else {
+                "-h, --help".to_owned()
+            },
+            wording("help_desc", "Print help"),
+        ));
+        entries.push((
+            if owns('V') {
+                "    --version".to_owned()
+            } else {
+                "-V, --version".to_owned()
+            },
+            wording("version_desc", "Print version"),
+        ));
+        if self
+            .tags()
+            .iter()
+            .any(|(name, _)| name.as_ref() == "help_first")
+        {
+            let help = entries.remove(entries.len() - 2);
+            entries.insert(0, help);
+            if self
+                .tags()
+                .iter()
+                .any(|(name, _)| name.as_ref() == "version_first")
+            {
+                let version = entries.pop().unwrap_or_default();
+                entries.insert(1, version);
+            }
+        } else if let Some(long) = self
+            .tags()
+            .iter()
+            .find_map(|(name, value)| (name.as_ref() == "help_before").then(|| value.as_ref()))
+        {
+            let needle = format!("--{long}");
+            if let Some(position) = entries.iter().position(|(label, _)| {
+                label
+                    .split_whitespace()
+                    .any(|word| word.trim_end_matches(',') == needle)
+            }) {
+                let help = entries.remove(entries.len() - 2);
+                entries.insert(position, help);
+            }
+        }
+        out.push_str("\nOptions:\n");
+        if self.help_style == HelpStyle::ClapWide {
+            push_wide_entries(out, &entries, self.spaced_help());
+        } else {
+            push_clap_entries(out, &entries);
+        }
+    }
+
     /// GNU coreutils-style help: `Usage:` line, about, then `-c, --long` options.
+    /// The tag's value, or `fallback` when the command does not carry it.
+    fn tag_or<'t>(&'t self, key: &str, fallback: &'t str) -> &'t str {
+        self.tags()
+            .iter()
+            .find_map(|(name, value)| (name.as_ref() == key).then(|| value.as_ref()))
+            .unwrap_or(fallback)
+    }
+
+    /// Whether the command carries `key` at all.
+    fn has_tag(&self, key: &str) -> bool {
+        self.tags().iter().any(|(name, _)| name.as_ref() == key)
+    }
+
+    /// The column a tagged width names, or `fallback` when it names none.
+    fn tag_width(&self, key: &str, fallback: usize) -> usize {
+        self.tag_or(key, "").parse().unwrap_or(fallback)
+    }
+
+    fn util_linux_help(&self) -> String {
+        let mut out = String::with_capacity(512);
+        out.push('\n');
+        out.push_str("Usage:\n");
+        let short_doc = self.short_doc.as_ref();
+        let usage = if short_doc.is_empty() {
+            self.usage()
+        } else {
+            short_doc.to_owned()
+        };
+        for line in usage.lines() {
+            out.push(' ');
+            out.push_str(line);
+            out.push('\n');
+        }
+        if !self.description.as_ref().is_empty() {
+            out.push('\n');
+            for line in self.description.as_ref() {
+                out.push_str(line.as_ref());
+                out.push('\n');
+            }
+        }
+
+        let entries = self.util_linux_entries();
+        let natural = entries
+            .iter()
+            .map(|(label, _)| label.chars().count() + 3)
+            .max()
+            .unwrap_or(16);
+        let width = self.tag_width("help_width", natural);
+        out.push_str("\nOptions:\n");
+        for (label, desc) in &entries {
+            // a row with neither label nor description is a separator inside the block
+            if label.is_empty() && desc.is_empty() {
+                out.push('\n');
+            } else {
+                push_util_linux_entry(&mut out, label, desc, width);
+            }
+        }
+
+        if self.spaced_help() {
+            out.push('\n');
+        }
+        let pair = self.tag_width("help_pair_width", width);
+        let owns = |ch: char| self.flags().iter().any(|flag| flag.ch == ch);
+        let help_label = if owns('h') {
+            "    --help"
+        } else {
+            "-h, --help"
+        };
+        push_util_linux_entry(
+            &mut out,
+            help_label,
+            self.tag_or("help_desc", "display this help and exit"),
+            pair,
+        );
+        if !owns('V') {
+            push_util_linux_entry(
+                &mut out,
+                "-V, --version",
+                self.tag_or("version_desc", "output version information and exit"),
+                pair,
+            );
+        }
+
+        for block in self.extra.as_ref() {
+            out.push('\n');
+            for line in block.as_ref().lines() {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+
+        if !self.has_tag("no_trailer") {
+            let page = self.tag_or("man_page", self.name());
+            out.push_str(&format!("\nFor more details see {page}(1).\n"));
+        }
+        out
+    }
+
+    /// Every documented flag as util-linux labels and describes it.
+    fn util_linux_entries(&self) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String)> = self
+            .flags()
+            .iter()
+            .filter(|flag| !flag.hidden && !flag.desc.as_ref().is_empty())
+            .filter(|flag| !matches!(flag.long.as_ref(), "help" | "version"))
+            .map(|flag| (util_linux_label(flag), flag.desc.as_ref().to_owned()))
+            .collect();
+        for (name, value) in self.tags() {
+            if name.as_ref() != "help_row" {
+                continue;
+            }
+            let mut parts = value.as_ref().splitn(3, '\t');
+            let (Some(at), Some(label), Some(desc)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let at = at.parse().unwrap_or(entries.len()).min(entries.len());
+            entries.insert(at, (label.to_owned(), desc.to_owned()));
+        }
+        entries
+    }
+
+    /// The authored `# Options` block, verbatim, as the entire help page.
+    fn verbatim_help(&self) -> String {
+        let mut out = String::with_capacity(512);
+        for line in self.extra.as_ref() {
+            out.push_str(line.as_ref());
+            out.push('\n');
+        }
+        out
+    }
+
     fn gnu_help(&self) -> String {
         let mut out = String::with_capacity(256);
         let short_doc = self.short_doc.as_ref();
@@ -313,13 +751,25 @@ where
         out.push_str("Usage: ");
         out.push_str(&usage);
         out.push('\n');
-        if !self.about.as_ref().is_empty() {
-            out.push_str(self.about.as_ref());
+        for line in self.about.as_ref().lines() {
+            out.push_str(line);
+            out.push('\n');
+        }
+        if !self.description.as_ref().is_empty() {
             out.push('\n');
         }
         for line in self.description.as_ref() {
             out.push_str(line.as_ref());
             out.push('\n');
+        }
+        // GNU hand-tunes each block's columns, so a command may author its whole tail
+        if self.has_tag("gnu_literal_tail") {
+            out.push('\n');
+            for line in self.extra.as_ref() {
+                out.push_str(line.as_ref());
+                out.push('\n');
+            }
+            return out;
         }
         self.push_gnu_options(&mut out);
         for line in self.exit_status.as_ref() {
@@ -358,6 +808,7 @@ impl CommandDef<Static> {
             about: self.about.to_owned(),
             short_doc: self.short_doc.to_owned(),
             style: self.style,
+            help_style: self.help_style,
             on_unknown: self.on_unknown,
             permute: self.permute,
             flags: self
@@ -373,6 +824,11 @@ impl CommandDef<Static> {
                 .map(PositionalDef::into_owned)
                 .collect(),
             has_rest: self.has_rest,
+            rest_label: self.rest_label.to_owned(),
+            rest_hidden: self.rest_hidden,
+            rest_desc: self.rest_desc.to_owned(),
+            rest_default: self.rest_default.to_owned(),
+            rest_required: self.rest_required,
             value_rules: self
                 .value_rules
                 .iter()
@@ -413,6 +869,10 @@ impl PositionalDef<Static> {
             name: self.name.to_owned(),
             required: self.required,
             desc: self.desc.to_owned(),
+            label: self.label.to_owned(),
+            default_value: self.default_value.to_owned(),
+            hidden: self.hidden,
+            spread: self.spread,
         }
     }
 }
@@ -503,12 +963,202 @@ const fn is_synthetic(ch: char) -> bool {
     ch >= '\u{E000}'
 }
 
+/// `-c, --long <VAL>`, with the short column blank for long-only flags.
+fn clap_flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
+    let override_label = flag.help_label.as_ref();
+    if !override_label.is_empty() {
+        return override_label.to_owned();
+    }
+    let mut label = String::with_capacity(24);
+    if is_synthetic(flag.ch) {
+        label.push_str("    ");
+    } else {
+        label.push('-');
+        label.push(flag.ch);
+        if flag.long.as_ref().is_empty() {
+            let value_name = flag.value_name.as_ref();
+            if !value_name.is_empty() {
+                label.push_str(" <");
+                label.push_str(value_name);
+                label.push('>');
+            }
+            return label;
+        }
+        label.push_str(", ");
+    }
+    label.push_str("--");
+    label.push_str(flag.long.as_ref());
+    let value_name = flag.value_name.as_ref();
+    if !value_name.is_empty() {
+        label.push_str(" <");
+        label.push_str(value_name);
+        label.push('>');
+    }
+    label
+}
+
+/// A flag's description with clap's trailing alias, default, and value notes.
+fn clap_flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
+    let mut desc = flag.desc.as_ref().to_owned();
+    let empty = desc.is_empty();
+    let default = flag.default_value.as_ref();
+    if !default.is_empty() {
+        desc.push_str(&format!(" [default: {default}]"));
+    }
+    // help lists only what the author asked it to; the accepted set is a parsing fact
+    let values = flag.help_values.as_ref();
+    if !values.is_empty() {
+        let joined = values
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>()
+            .join(", ");
+        desc.push_str(&format!(" [possible values: {joined}]"));
+    }
+    let aliases = flag.visible_aliases.as_ref();
+    if !aliases.is_empty() {
+        let joined = aliases
+            .iter()
+            .map(|alias| {
+                let alias = alias.as_ref();
+                if alias.chars().count() == 1 {
+                    format!("-{alias}")
+                } else {
+                    format!("--{alias}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let label = if aliases.len() == 1 {
+            "alias"
+        } else {
+            "aliases"
+        };
+        desc.push_str(&format!(" [{label}: {joined}]"));
+    }
+    if empty {
+        desc = desc.trim_start().to_owned();
+    }
+    desc
+}
+
+/// A positional's description, with clap's trailing default note when it has one.
+fn clap_argument_desc<S: Storage>(positional: &PositionalDef<S>) -> String {
+    let desc = positional.desc.as_ref();
+    let default = positional.default_value.as_ref();
+    match (desc.is_empty(), default.is_empty()) {
+        (_, true) => desc.to_owned(),
+        (true, false) => format!("[default: {default}]"),
+        (false, false) => format!("{desc} [default: {default}]"),
+    }
+}
+
+/// Two-space margin, labels padded to the widest, two-space gutter, description.
+fn push_clap_entries(out: &mut String, entries: &[(String, String)]) {
+    let width = entries
+        .iter()
+        .map(|(label, _)| label.len())
+        .max()
+        .unwrap_or(0);
+    let room = CLAP_TERM_WIDTH.saturating_sub(width + 4).max(1);
+    for (label, desc) in entries {
+        let wrapped = clap_wrap(desc, room);
+        for (index, line) in wrapped.iter().enumerate() {
+            if index == 0 {
+                out.push_str("  ");
+                out.push_str(label);
+                for _ in label.len()..width {
+                    out.push(' ');
+                }
+                out.push_str("  ");
+            } else {
+                for _ in 0..width + 4 {
+                    out.push(' ');
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+}
+
+/// The column a next-line description starts at.
+const CLAP_WIDE_INDENT: usize = 10;
+
+/// Each label on its own line, its description on the lines below it.
+fn push_wide_entries(out: &mut String, entries: &[(String, String)], spaced: bool) {
+    let room = CLAP_TERM_WIDTH.saturating_sub(CLAP_WIDE_INDENT).max(1);
+    for (index, (label, desc)) in entries.iter().enumerate() {
+        if spaced && index > 0 {
+            out.push('\n');
+        }
+        out.push_str("  ");
+        out.push_str(label);
+        out.push('\n');
+        if desc.is_empty() {
+            for _ in 0..CLAP_WIDE_INDENT {
+                out.push(' ');
+            }
+            out.push('\n');
+            continue;
+        }
+        for line in clap_wrap(desc, room) {
+            if !line.is_empty() {
+                for _ in 0..CLAP_WIDE_INDENT {
+                    out.push(' ');
+                }
+                out.push_str(&line);
+            }
+            out.push('\n');
+        }
+    }
+}
+
+/// The column clap wraps option descriptions at.
+const CLAP_TERM_WIDTH: usize = 100;
+
+/// Each authored line wrapped to `room` columns, never fewer than one line out.
+fn clap_wrap(desc: &str, room: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for paragraph in desc.lines() {
+        let indent: String = paragraph
+            .chars()
+            .take_while(|character| *character == ' ')
+            .collect();
+        let mut line = indent.clone();
+        let mut gap = String::new();
+        for token in paragraph.trim_start_matches(' ').split(' ') {
+            if token.is_empty() {
+                gap.push(' ');
+                continue;
+            }
+            let separator = if line == indent {
+                String::new()
+            } else {
+                format!("{gap} ")
+            };
+            if line != indent && line.len() + separator.len() + token.len() > room {
+                out.push(std::mem::replace(&mut line, indent.clone()));
+            } else {
+                line.push_str(&separator);
+            }
+            line.push_str(token);
+            gap.clear();
+        }
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests verify known structure")]
 mod tests {
     use super::{CommandDef, OwnedCommandDef, PositionalDef};
     use crate::parse::{FlagDef, FlagKind, OnUnknown};
-    use crate::style::Style;
+    use crate::style::{HelpStyle, Style};
 
     fn make_def(
         name: &'static str,
@@ -524,11 +1174,17 @@ mod tests {
             about,
             short_doc,
             style: Style::Posix,
+            help_style: HelpStyle::from_parse_style(Style::Posix),
             on_unknown: OnUnknown::Reject,
             permute: false,
             flags,
             positionals: &[],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
@@ -559,6 +1215,11 @@ mod tests {
         implemented: true,
         repeatable: false,
         allow_hyphen_values: true,
+        possible_values: &[],
+        help_values: &[],
+        default_value: "",
+        help_label: "",
+        visible_aliases: &[],
     }];
 
     #[test]
@@ -709,6 +1370,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
             desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
         },
         FlagDef {
@@ -722,6 +1388,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
             desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
         },
         FlagDef {
@@ -735,6 +1406,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
             desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
         },
     ];
@@ -858,6 +1534,7 @@ mod tests {
             about: "",
             short_doc: "",
             style: Style::Posix,
+            help_style: HelpStyle::from_parse_style(Style::Posix),
             on_unknown: OnUnknown::Reject,
             permute: false,
             flags: &[],
@@ -865,8 +1542,17 @@ mod tests {
                 name: "target",
                 required: true,
                 desc: "",
+                label: "",
+                default_value: "",
+                hidden: false,
+                spread: false,
             }],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
@@ -921,6 +1607,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
         FlagDef {
             ch: 's',
@@ -934,6 +1625,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
     ];
 
@@ -950,6 +1646,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
         FlagDef {
             ch: 'V',
@@ -963,6 +1664,11 @@ mod tests {
             implemented: true,
             repeatable: false,
             allow_hyphen_values: true,
+            possible_values: &[],
+            help_values: &[],
+            default_value: "",
+            help_label: "",
+            visible_aliases: &[],
         },
     ];
 
@@ -972,11 +1678,17 @@ mod tests {
             about: "sample",
             short_doc: "sample [OPTION]...",
             style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
             on_unknown: OnUnknown::Reject,
             permute: true,
             flags,
             positionals: &[],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
@@ -993,6 +1705,125 @@ mod tests {
         }
     }
 
+    static UTIL_LINUX_FLAGS: [FlagDef; 3] = [
+        FlagDef {
+            ch: 's',
+            long: "single-shot",
+            desc: "return one PID only",
+            implemented: true,
+            ..FlagDef::EMPTY
+        },
+        FlagDef {
+            ch: 'o',
+            long: "omit-pid",
+            kind: FlagKind::Value,
+            value_name: "PID,...",
+            desc: "omit processes with PID",
+            implemented: true,
+            ..FlagDef::EMPTY
+        },
+        FlagDef {
+            ch: '\u{e000}',
+            long: "wide",
+            desc: "wide output",
+            implemented: true,
+            ..FlagDef::EMPTY
+        },
+    ];
+
+    fn util_linux_def(tags: &'static [(&'static str, &'static str)]) -> CommandDef {
+        CommandDef {
+            name: "pidof",
+            about: "Find the process ID of a running program",
+            short_doc: "pidof [options] [program [...]]",
+            style: Style::Gnu,
+            help_style: HelpStyle::UtilLinux,
+            permute: true,
+            flags: &UTIL_LINUX_FLAGS,
+            has_rest: true,
+            tags,
+            ..CommandDef::EMPTY
+        }
+    }
+
+    #[test]
+    fn util_linux_help_injects_a_literal_row_at_its_index() {
+        let help = util_linux_def(&[
+            ("help_width", "27"),
+            (
+                "help_row",
+                "0\t-<sig>\tsignal to send (either number or name)",
+            ),
+        ])
+        .help();
+        assert!(help.contains(
+            "Options:\n -<sig>                    signal to send (either number or name)\n -s, --single-shot"
+        ));
+    }
+
+    #[test]
+    fn util_linux_help_hangs_a_literal_row_whose_description_opens_blank() {
+        let help = util_linux_def(&[
+            ("help_width", "27"),
+            (
+                "help_row",
+                "0\t-s, --input-separator, --separator <string>\t\npossible table delimiters",
+            ),
+        ])
+        .help();
+        assert!(help.contains(
+            "Options:\n -s, --input-separator, --separator <string>\n                             possible table delimiters\n"
+        ));
+    }
+
+    #[test]
+    fn util_linux_help_separates_rows_and_appends_extra_blocks() {
+        let mut def = util_linux_def(&[("help_row", "1\t\t")]);
+        static EXTRA: [&str; 1] = ["Arguments:\n Values for <length> may carry a suffix."];
+        def.extra = &EXTRA;
+        let help = def.help();
+        assert!(help.contains("return one PID only\n\n -o, --omit-pid"));
+        assert!(help.contains(
+            "\n\nArguments:\n Values for <length> may carry a suffix.\n\nFor more details"
+        ));
+    }
+
+    #[test]
+    fn util_linux_help_opens_blank_and_closes_with_the_manpage() {
+        let help = util_linux_def(&[]).help();
+        assert!(help.starts_with("\nUsage:\n pidof [options] [program [...]]\n\nOptions:\n"));
+        assert!(help.ends_with("\nFor more details see pidof(1).\n"));
+    }
+
+    #[test]
+    fn util_linux_help_places_long_only_flags_under_the_long_column() {
+        let help = util_linux_def(&[("help_width", "27")]).help();
+        assert!(help.contains("\n -s, --single-shot         return one PID only\n"));
+        assert!(help.contains("\n -o, --omit-pid <PID,...>  omit processes with PID\n"));
+        assert!(help.contains("\n     --wide                wide output\n"));
+    }
+
+    #[test]
+    fn util_linux_help_gives_the_help_pair_its_own_column() {
+        let help = util_linux_def(&[("help_width", "27"), ("help_pair_width", "16")]).help();
+        assert!(help.contains("\n -h, --help     display this help and exit\n"));
+        assert!(help.contains("\n -V, --version  output version information and exit\n"));
+    }
+
+    #[test]
+    fn util_linux_help_spaces_the_pair_and_renames_the_manpage_on_request() {
+        let help = util_linux_def(&[("help_spaced", "1"), ("man_page", "pgrep")]).help();
+        assert!(help.contains("wide output\n\n -h, --help"));
+        assert!(help.ends_with("For more details see pgrep(1).\n"));
+    }
+
+    #[test]
+    fn util_linux_help_drops_the_trailer_when_the_reference_has_none() {
+        let help = util_linux_def(&[("no_trailer", "1")]).help();
+        assert!(!help.contains("For more details"));
+        assert!(help.ends_with("output version information and exit\n"));
+    }
+
     #[test]
     fn gnu_help_renders_usage_about_and_options() {
         let def: CommandDef = CommandDef {
@@ -1000,11 +1831,17 @@ mod tests {
             about: "Print NAME with any leading directory components removed",
             short_doc: "basename [-z] NAME [SUFFIX]",
             style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
             on_unknown: OnUnknown::Reject,
             permute: true,
             flags: &GNU_FLAGS,
             positionals: &[],
             has_rest: true,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
@@ -1033,17 +1870,58 @@ mod tests {
     }
 
     #[test]
+    fn verbatim_help_emits_only_the_authored_block() {
+        let def: CommandDef = CommandDef {
+            name: "xxd",
+            about: "Make a hex dump or do the reverse",
+            short_doc: "xxd [options] [infile [outfile]]",
+            style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
+            on_unknown: OnUnknown::Reject,
+            permute: true,
+            flags: &GNU_FLAGS,
+            positionals: &[],
+            has_rest: true,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
+            tags: &[("verbatim_help", "")],
+            description: &["ignored"],
+            extra: &[
+                "Usage:",
+                "       xxd [options]",
+                "Options:",
+                "    -a  autoskip",
+            ],
+            exit_status: &["ignored"],
+            ..CommandDef::EMPTY
+        };
+        assert_eq!(
+            def.help(),
+            "Usage:\n       xxd [options]\nOptions:\n    -a  autoskip\n"
+        );
+    }
+
+    #[test]
     fn gnu_help_footer_present_without_flags() {
         let def: CommandDef = CommandDef {
             name: "true",
             about: "do nothing, successfully",
             short_doc: "true",
             style: Style::Gnu,
+            help_style: HelpStyle::from_parse_style(Style::Gnu),
             on_unknown: OnUnknown::Reject,
             permute: true,
             flags: &[],
             positionals: &[],
             has_rest: false,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
             value_rules: &[],
             numeric_operands: &[],
             first_numeric_value: None,
@@ -1096,4 +1974,276 @@ mod tests {
         assert!(help.starts_with("exit: exit [n]\n"));
         assert!(!help.contains("Usage:"));
     }
+    // Reproduces the pinned `wc --help` layout from the reference build
+    #[test]
+    fn clap_help_matches_the_reference_layout() {
+        static FLAGS: &[FlagDef] = &[
+            FlagDef {
+                ch: 'c',
+                long: "bytes",
+                aliases: &[],
+                kind: FlagKind::Bool,
+                clears: &[],
+                desc: "print the byte counts",
+                value_name: "",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+                possible_values: &[],
+                help_values: &[],
+                default_value: "",
+                help_label: "",
+                visible_aliases: &[],
+            },
+            FlagDef {
+                ch: '\u{e000}',
+                long: "files0-from",
+                aliases: &[],
+                kind: FlagKind::Value,
+                clears: &[],
+                desc: "read input from the files specified by\nNUL-terminated names in file F",
+                value_name: "F",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+                possible_values: &[],
+                help_values: &[],
+                default_value: "",
+                help_label: "",
+                visible_aliases: &[],
+            },
+        ];
+        let def: CommandDef = CommandDef {
+            name: "wc",
+            about: "Print newline, word, and byte counts for each FILE.",
+            short_doc: "wc [OPTION]... [FILE]...",
+            style: Style::Gnu,
+            help_style: HelpStyle::Clap,
+            on_unknown: OnUnknown::Reject,
+            permute: true,
+            flags: FLAGS,
+            positionals: &[],
+            has_rest: true,
+            rest_label: "",
+            rest_hidden: false,
+            rest_desc: "",
+            rest_default: "",
+            rest_required: false,
+            tags: &[],
+            description: &[],
+            extra: &[],
+            exit_status: &[],
+            ..CommandDef::EMPTY
+        };
+
+        let expected = "\
+Print newline, word, and byte counts for each FILE.
+
+Usage: wc [OPTION]... [FILE]...
+
+Arguments:
+  [args]...  
+
+Options:
+  -c, --bytes            print the byte counts
+      --files0-from <F>  read input from the files specified by
+                         NUL-terminated names in file F
+  -h, --help             Print help
+  -V, --version          Print version
+";
+        assert_eq!(def.help(), expected);
+    }
+
+    #[test]
+    fn clap_help_indents_every_usage_continuation() {
+        let def = CommandDef {
+            short_doc: "unlink FILE\nunlink OPTION",
+            help_style: HelpStyle::Clap,
+            ..gnu_definition(&[])
+        };
+        assert!(
+            def.help()
+                .contains("Usage: unlink FILE\n       unlink OPTION\n")
+        );
+    }
+
+    #[test]
+    fn clap_help_hides_an_operand_and_notes_a_default() {
+        static POSITIONALS: &[PositionalDef] = &[
+            PositionalDef {
+                name: "path",
+                required: true,
+                desc: "",
+                label: "",
+                default_value: "",
+                hidden: true,
+                spread: false,
+            },
+            PositionalDef {
+                name: "input",
+                required: false,
+                desc: "",
+                label: "",
+                default_value: "-",
+                hidden: false,
+                spread: false,
+            },
+        ];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            positionals: POSITIONALS,
+            ..gnu_definition(&[])
+        };
+        let help = def.help();
+        assert!(!help.contains("<path>"), "hidden operand was listed");
+        assert!(help.contains("  [input]  [default: -]\n"));
+    }
+
+    #[test]
+    fn clap_help_labels_the_rest_slot() {
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            has_rest: true,
+            rest_label: "files",
+            ..gnu_definition(&[])
+        };
+        assert!(def.help().contains("Arguments:\n  [files]...  \n"));
+    }
+
+    #[test]
+    fn clap_help_inserts_an_arg_row_before_the_rest_slot() {
+        const ARG_ROW_MODE: &[(&str, &str)] = &[("arg_row", "0\t[MODE]\t")];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            has_rest: true,
+            rest_label: "FILE",
+            tags: ARG_ROW_MODE,
+            ..gnu_definition(&[])
+        };
+        assert!(
+            def.help()
+                .contains("Arguments:\n  [MODE]     \n  [FILE]...  \n")
+        );
+    }
+
+    #[test]
+    fn clap_help_appends_an_arg_row_past_the_end_and_keeps_its_desc() {
+        const ARG_ROW_SIZE: &[(&str, &str)] = &[("arg_row", "9\t[SIZE]\tbytes to keep")];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            has_rest: true,
+            rest_label: "FILE",
+            tags: ARG_ROW_SIZE,
+            ..gnu_definition(&[])
+        };
+        assert!(
+            def.help()
+                .contains("Arguments:\n  [FILE]...  \n  [SIZE]     bytes to keep\n")
+        );
+    }
+
+    #[test]
+    fn clap_help_notes_defaults_possible_values_and_aliases() {
+        static FLAGS: &[FlagDef] = &[
+            FlagDef {
+                ch: 'q',
+                long: "quiet",
+                aliases: &[],
+                kind: FlagKind::Bool,
+                clears: &[],
+                desc: "never print headers giving file names",
+                value_name: "",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+                possible_values: &[],
+                help_values: &[],
+                default_value: "",
+                help_label: "",
+                visible_aliases: &["silent"],
+            },
+            FlagDef {
+                ch: 'c',
+                long: "color",
+                aliases: &[],
+                kind: FlagKind::Value,
+                clears: &[],
+                desc: "colorize the output",
+                value_name: "WHEN",
+                hidden: false,
+                implemented: true,
+                repeatable: false,
+                allow_hyphen_values: true,
+                possible_values: &["always", "auto", "never"],
+                help_values: &["always", "auto", "never"],
+                default_value: "auto",
+                help_label: "",
+                visible_aliases: &[],
+            },
+        ];
+        let def = CommandDef {
+            help_style: HelpStyle::Clap,
+            flags: FLAGS,
+            ..gnu_definition(&[])
+        };
+        let help = def.help();
+        assert!(help.contains("never print headers giving file names [alias: --silent]\n"));
+        assert!(help.contains(
+            "colorize the output [default: auto] [possible values: always, auto, never]\n"
+        ));
+    }
+}
+
+/// One option row, its continuation lines hanging two past the description column.
+fn push_util_linux_entry(out: &mut String, label: &str, desc: &str, width: usize) {
+    let mut lines = desc.lines();
+    let head = lines.next().unwrap_or("");
+    let shown = format!(" {label}");
+    let pad = width.saturating_sub(shown.chars().count()).max(1);
+    out.push_str(&shown);
+    if head.is_empty() {
+        out.push('\n');
+    } else {
+        out.push_str(&" ".repeat(pad));
+        out.push_str(head);
+        out.push('\n');
+    }
+    for line in lines {
+        // an authored indent places the line itself; otherwise it hangs two past the column
+        if !line.starts_with(' ') {
+            out.push_str(&" ".repeat(width + 2));
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+}
+
+/// util-linux writes a long-only flag under the long column and brackets an optional value.
+fn util_linux_label<S: Storage>(flag: &FlagDef<S>) -> String {
+    let authored = flag.help_label.as_ref();
+    if !authored.is_empty() {
+        return authored.to_owned();
+    }
+    let long = flag.long.as_ref();
+    let value = flag.value_name.as_ref();
+    let mut label = if flag.ch.is_ascii_graphic() {
+        if long.is_empty() {
+            format!("-{}", flag.ch)
+        } else {
+            format!("-{}, --{long}", flag.ch)
+        }
+    } else {
+        format!("    --{long}")
+    };
+    if !value.is_empty() {
+        if matches!(flag.kind, FlagKind::Value | FlagKind::PolarValue) {
+            label.push_str(&format!(" <{value}>"));
+        } else {
+            label.push_str(&format!("[=<{value}>]"));
+        }
+    }
+    label
 }
