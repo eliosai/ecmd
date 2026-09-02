@@ -3,6 +3,7 @@
 #[cfg(feature = "rkyv")]
 pub mod archive;
 pub mod error;
+mod help;
 pub mod meta;
 pub mod operands;
 pub mod parse;
