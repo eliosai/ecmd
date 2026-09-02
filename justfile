@@ -69,6 +69,10 @@ hooks:
 hooks-run:
     prek run --all-files
 
+# Print the version the next merge to main would release
+release-plan:
+    bash scripts/release.sh --dry-run
+
 # Run everything the gate runs
 ci:
     just check
