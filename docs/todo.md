@@ -4,8 +4,7 @@ Only unfinished work belongs here. Git history carries completed plans and measu
 
 ## 1.0
 
-- Split `codegen.rs`, honor `#[operand(required)]` and `default =` at parse time, test every derive attribute
-- Write the README as the crate doc and `docs/api.md`, `parsing.md`, `derive.md`, `releasing.md`
+- Write `docs/releasing.md` beside the release workflow
 - Land the release workflow, `cliff.toml`, the deploy key and the `main` ruleset, then ship 1.0.0
 
 ## 1.x
@@ -16,3 +15,4 @@ Only unfinished work belongs here. Git history carries completed plans and measu
 - Subcommands
 - `OsStr` argv
 - Positionals in the bash, GNU and util-linux help dialects
+- Value policies and exclusive groups on `DefBuilder`

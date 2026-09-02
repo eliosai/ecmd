@@ -1,4 +1,4 @@
-//! Type-driven POSIX and GNU argument parsing
+#![doc = include_str!("../../../README.md")]
 
 #[cfg(feature = "rkyv")]
 mod archive;
