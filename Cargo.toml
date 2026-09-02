@@ -104,7 +104,7 @@ partial_pub_fields = "warn"
 as_conversions = "warn"
 default_numeric_fallback = "warn"
 unseparated_literal_suffix = "warn"
-mod_module_files = "warn"
+self_named_module_files = "warn"
 
 # String handling
 str_to_string = "warn"
