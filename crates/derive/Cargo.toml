@@ -7,10 +7,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Derive macro for the ecmd argument parser"
-readme = "../../README.md"
+readme = "README.md"
 keywords = ["cli", "argument", "parser", "derive"]
 categories = ["command-line-interface"]
-include = ["src/**/*.rs", "Cargo.toml", "../../LICENSE", "../../README.md"]
+include = ["src/**/*.rs", "Cargo.toml", "LICENSE", "README.md"]
 
 [lib]
 proc-macro = true
