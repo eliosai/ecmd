@@ -41,4 +41,4 @@ Handles POSIX flag bundling (`-abc`), stuck values (`-ofile`), `--` terminator, 
 
 ## License
 
-[MIT](https://github.com/eliosai/ecmd/blob/main/rust/core/LICENSE)
+[MIT](https://github.com/eliosai/ecmd/blob/main/crates/core/LICENSE)
