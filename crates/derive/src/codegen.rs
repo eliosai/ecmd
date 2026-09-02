@@ -183,14 +183,14 @@ fn gen_parse(fields: &[ClassifiedField<'_>]) -> TokenStream {
     let names: Vec<_> = fields.iter().map(|cf| cf.ident).collect();
 
     quote! {
-        let result = Self::def().scan(args)?;
-        if let Some(flag) = result.unimplemented.first() {
-            return Err(::ecmd::error::Error::UnimplementedFlag(flag.clone()));
+        let scan = Self::def().scan(args)?;
+        if let Some(name) = scan.unimplemented().first() {
+            return Err(::ecmd::error::Error::UnimplementedFlag(name.to_string()));
         }
 
         #inits
 
-        for flag in &result.flags {
+        for flag in scan.flags() {
             match flag {
                 #dispatch
                 _ => {}
@@ -200,17 +200,6 @@ fn gen_parse(fields: &[ClassifiedField<'_>]) -> TokenStream {
         #positionals
 
         Ok(Self { #(#names),* })
-    }
-}
-
-fn append_version_opt_out(defs: &mut Vec<TokenStream>, cmd: &CommandAttrs) {
-    if cmd.no_implicit_version {
-        defs.push(quote! {
-            ::ecmd::parse::FlagDef {
-                ch: 'V', hidden: true,
-                ..::ecmd::parse::FlagDef::EMPTY
-            }
-        });
     }
 }
 
@@ -278,7 +267,7 @@ fn gen_single_dispatch(
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! {
                 ::ecmd::parse::Parsed::PolarValue(#ch, p, v) => {
-                    #id.push(::ecmd::polarity::PolarVal::new(*p, v.clone()));
+                    #id.push(::ecmd::polarity::PolarVal::new(*p, (*v).to_owned()));
                     #resets
                 }
             })
@@ -317,19 +306,21 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
         let id = cf.ident;
         match &cf.role {
             FieldRole::OptionalPositional => {
-                stmts.push(quote! { #id = result.operands.get(#idx).cloned(); });
+                stmts.push(
+                    quote! { #id = scan.operands().get(#idx).map(|value| (*value).to_owned()); },
+                );
                 idx = idx.saturating_add(1);
             }
             FieldRole::RequiredPositional => {
                 stmts.push(quote! {
-                    #id = result.operands.get(#idx).cloned().unwrap_or_default();
+                    #id = scan.operands().get(#idx).map_or_else(String::new, |value| (*value).to_owned());
                 });
                 idx = idx.saturating_add(1);
             }
             FieldRole::Rest => {
                 stmts.push(quote! {
                     #id = ::ecmd::operands::Operands::from_args(
-                        result.operands.get(#idx..).unwrap_or_default()
+                        scan.operands().get(#idx..).unwrap_or_default()
                     );
                 });
             }
@@ -350,7 +341,7 @@ fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenStream
             FieldRole::OptionalPositional => idx = idx.saturating_add(1),
             FieldRole::RequiredPositional => {
                 checks.push(quote! {
-                    if result.operands.get(#idx).is_none() {
+                    if scan.operands().get(#idx).is_none() {
                         __missing_required.push(#name.to_owned());
                     }
                 });
@@ -663,6 +654,7 @@ fn gen_meta(
         quote! { ::ecmd::parse::OnUnknown::Reject }
     };
     let permute = !cmd.no_permute;
+    let no_implicit_version = cmd.no_implicit_version;
     let flag_metas = gen_flag_metas(cmd, fields);
     let pos_metas = gen_positional_metas(fields);
     let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
@@ -740,6 +732,7 @@ fn gen_meta(
             numeric_operands: #numeric_operands,
             first_numeric_value: #first_numeric,
             exact_long: #exact_long,
+            no_implicit_version: #no_implicit_version,
             equals_only: #equals_only,
             attached_values: #attached_values,
             separated_values: #separated_values,
@@ -767,7 +760,6 @@ fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenSt
             }
         });
     }
-    append_version_opt_out(&mut defs, cmd);
     quote! { #(#defs),* }
 }
 
@@ -888,7 +880,7 @@ fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
 fn gen_value_assign(id: &Ident, field: &Field, ch: char) -> TokenStream {
     let inner = crate::classify::inner_type_name(&field.ty);
     if inner.as_deref() == Some("String") {
-        quote! { #id = Some(v.clone()); }
+        quote! { #id = Some((*v).to_owned()); }
     } else {
         gen_parse_into(quote! { #id = Some }, ch)
     }
@@ -897,7 +889,7 @@ fn gen_value_assign(id: &Ident, field: &Field, ch: char) -> TokenStream {
 fn gen_repeatable_push(id: &Ident, field: &Field, ch: char) -> TokenStream {
     let inner = crate::classify::inner_type_name(&field.ty);
     if inner.as_deref() == Some("String") {
-        quote! { #id.push(v.clone()); }
+        quote! { #id.push((*v).to_owned()); }
     } else {
         gen_parse_into(quote! { #id.push }, ch)
     }
@@ -912,7 +904,7 @@ fn gen_parse_into(target: TokenStream, ch: char) -> TokenStream {
         #target(v.parse().map_err(|e| {
             ::ecmd::error::Error::InvalidValue {
                 flag: format!("-{}", #ch),
-                value: v.clone(),
+                value: (*v).to_owned(),
                 reason: format!("{e}"),
             }
         })?);

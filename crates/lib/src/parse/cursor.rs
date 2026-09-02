@@ -1,7 +1,5 @@
 //! The position in one argument slice
 
-use crate::error::Error;
-
 pub struct Cursor<'a> {
     args: &'a [&'a str],
     pos: usize,
@@ -24,25 +22,21 @@ impl<'a> Cursor<'a> {
         self.pos = self.pos.saturating_add(1);
     }
 
-    pub fn next_value(&mut self, flag_ch: char) -> Result<String, Error> {
+    /// The argument under the cursor, moving past it
+    pub fn take(&mut self) -> Option<&'a str> {
+        let value = self.peek()?;
         self.advance();
-        self.take_next(&format!("-{flag_ch}"))
+        Some(value)
     }
 
-    pub fn take_next(&mut self, opt: &str) -> Result<String, Error> {
-        let val = self
-            .peek()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| Error::MissingValue(opt.to_owned()))?;
+    /// The argument under the cursor when it passes the test, moving past it
+    pub fn take_if(&mut self, accept: impl FnOnce(&str) -> bool) -> Option<&'a str> {
+        let value = self.peek().filter(|value| accept(value))?;
         self.advance();
-        Ok(val)
+        Some(value)
     }
 
     pub fn rest(&self) -> &'a [&'a str] {
         self.args.get(self.pos..).unwrap_or_default()
-    }
-
-    pub fn following(&self) -> Option<&'a str> {
-        self.args.get(self.pos.saturating_add(1)).copied()
     }
 }

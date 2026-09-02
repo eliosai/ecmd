@@ -88,6 +88,8 @@ pub struct CommandDef<S: Storage = Static> {
     pub first_numeric_value: Option<char>,
     /// Whether GNU long options require exact names.
     pub exact_long: bool,
+    /// Whether the command withholds the implicit `-V` short for version.
+    pub no_implicit_version: bool,
     /// Valued long options that require an attached value.
     pub equals_only: S::List<char>,
     /// Short options that require an attached value.
@@ -130,6 +132,7 @@ impl CommandDef<Static> {
         numeric_operands: &[],
         first_numeric_value: None,
         exact_long: false,
+        no_implicit_version: false,
         equals_only: &[],
         attached_values: &[],
         separated_values: &[],
@@ -164,6 +167,7 @@ impl Default for CommandDef<Owned> {
             numeric_operands: Vec::new(),
             first_numeric_value: None,
             exact_long: false,
+            no_implicit_version: false,
             equals_only: Vec::new(),
             attached_values: Vec::new(),
             separated_values: Vec::new(),
@@ -229,7 +233,7 @@ where
     }
 
     /// Scan one invocation against this command shape
-    pub fn scan(&self, args: &[&str]) -> Result<crate::parse::ScanResult, Error> {
+    pub fn scan<'a>(&'a self, args: &'a [&'a str]) -> Result<crate::parse::Scan<'a>, Error> {
         let policy = crate::parse::Policy::from_definition(self);
         crate::parse::scan_with_policy(
             args,
@@ -523,7 +527,7 @@ where
             wording("help_desc", "Print help"),
         ));
         entries.push((
-            if owns('V') {
+            if owns('V') || self.no_implicit_version {
                 "    --version".to_owned()
             } else {
                 "-V, --version".to_owned()
@@ -642,7 +646,7 @@ where
             self.tag_or("help_desc", "display this help and exit"),
             pair,
         );
-        if !owns('V') {
+        if !owns('V') && !self.no_implicit_version {
             push_util_linux_entry(
                 &mut out,
                 "-V, --version",
@@ -755,7 +759,7 @@ where
         } else {
             out.push_str("  -h, --help\tdisplay this help and exit\n");
         }
-        if self.flags().iter().any(|flag| flag.ch == 'V') {
+        if self.flags().iter().any(|flag| flag.ch == 'V') || self.no_implicit_version {
             out.push_str("      --version\toutput version information and exit\n");
         } else {
             out.push_str("  -V, --version\toutput version information and exit\n");
@@ -801,6 +805,7 @@ impl CommandDef<Static> {
             numeric_operands: self.numeric_operands.to_vec(),
             first_numeric_value: self.first_numeric_value,
             exact_long: self.exact_long,
+            no_implicit_version: self.no_implicit_version,
             equals_only: self.equals_only.to_vec(),
             attached_values: self.attached_values.to_vec(),
             separated_values: self.separated_values.to_vec(),
@@ -1218,6 +1223,7 @@ mod tests {
             numeric_operands: &[],
             first_numeric_value: None,
             exact_long: false,
+            no_implicit_version: false,
             equals_only: &[],
             attached_values: &[],
             separated_values: &[],
@@ -1584,6 +1590,7 @@ mod tests {
             numeric_operands: &[],
             first_numeric_value: None,
             exact_long: false,
+            no_implicit_version: false,
             equals_only: &[],
             attached_values: &[],
             separated_values: &[],
@@ -1720,6 +1727,7 @@ mod tests {
             numeric_operands: &[],
             first_numeric_value: None,
             exact_long: false,
+            no_implicit_version: false,
             equals_only: &[],
             attached_values: &[],
             separated_values: &[],
@@ -1873,6 +1881,7 @@ mod tests {
             numeric_operands: &[],
             first_numeric_value: None,
             exact_long: false,
+            no_implicit_version: false,
             equals_only: &[],
             attached_values: &[],
             separated_values: &[],
@@ -1953,6 +1962,7 @@ mod tests {
             numeric_operands: &[],
             first_numeric_value: None,
             exact_long: false,
+            no_implicit_version: false,
             equals_only: &[],
             attached_values: &[],
             separated_values: &[],

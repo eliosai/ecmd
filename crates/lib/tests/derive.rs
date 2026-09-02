@@ -13,6 +13,7 @@
 use ecmd::Command;
 use ecmd::meta::Command as CommandTrait;
 use ecmd::operands::Operands;
+use ecmd::parse::Spelling;
 use ecmd::polarity::{PolarVal, Polarity};
 
 // ── Basic: bool flags + positionals ─────────────────────────
@@ -1320,7 +1321,7 @@ fn unimplemented_flags_are_declared_but_rejected_at_runtime() {
     let scan = definition.scan(&["--ftp-port=host"]).unwrap();
 
     assert!(!definition.flags()[0].implemented);
-    assert_eq!(scan.unimplemented, ["--ftp-port"]);
+    assert_eq!(scan.unimplemented(), [Spelling::Long("ftp-port")]);
     assert_eq!(
         Fetch::parse(&["--ftp-port=host"]).unwrap_err(),
         ecmd::error::Error::UnimplementedFlag("--ftp-port".to_owned())
@@ -1339,7 +1340,7 @@ struct VersionOptOut {
 fn gnu_command_can_reject_the_implicit_uppercase_version_flag() {
     assert_eq!(
         VersionOptOut::parse(&["-V"]).unwrap_err(),
-        ecmd::error::Error::UnimplementedFlag("-V".to_owned())
+        ecmd::error::Error::UnknownFlag("-V".to_owned())
     );
     assert!(VersionOptOut::parse(&["-v"]).unwrap().version);
     assert!(VersionOptOut::def().help().contains("      --version"));
