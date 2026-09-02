@@ -2,11 +2,6 @@
 
 Only unfinished work belongs here. Git history carries completed plans and measurements.
 
-## 1.0
-
-- Write `docs/releasing.md` beside the release workflow
-- Land the release workflow, `cliff.toml`, the deploy key and the `main` ruleset, then ship 1.0.0
-
 ## 1.x
 
 - `--no-` negation for GNU boolean flags

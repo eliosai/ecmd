@@ -7,10 +7,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Type-driven POSIX and GNU argument parsing"
-readme = "../../README.md"
+readme = "README.md"
 keywords = ["cli", "argument", "parser", "posix", "flags"]
 categories = ["command-line-interface"]
-include = ["src/**/*.rs", "Cargo.toml", "../../LICENSE", "../../README.md"]
+include = ["src/**/*.rs", "Cargo.toml", "LICENSE", "README.md"]
 
 [package.metadata.docs.rs]
 all-features = true

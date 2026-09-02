@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/lib", "crates/derive"]
 
 [workspace.package]
-version = "0.6.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Joshua Smotritsky"]
@@ -11,7 +11,7 @@ license = "MIT"
 repository = "https://github.com/eliosai/ecmd"
 
 [workspace.dependencies]
-ecmd-derive = { version = "0.6.0", path = "crates/derive" }
+ecmd-derive = { version = "1.0.0", path = "crates/derive" }
 thiserror = "2.0"
 rkyv = { version = "0.8.16", default-features = false, features = ["std", "bytecheck"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
