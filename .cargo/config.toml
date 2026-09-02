@@ -1,0 +1,3 @@
+# rustc 1.97 trips an incremental-cache ICE on this crate, so every build is a full one
+[build]
+incremental = false

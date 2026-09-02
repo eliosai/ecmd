@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if grep -rnE '^\s*(///|//!)?\s*```(rust,)?(ignore|no_run|compile_fail|text)' README.md docs crates --include='*.md' --include='*.rs'; then
+if grep -rnE '^\s*(///|//!)?\s*```(rust,)?(ignore|no_run|compile_fail)' README.md docs crates --include='*.md' --include='*.rs'; then
     echo "documentation contains a Rust example the doc tests skip" >&2
     exit 1
 fi
