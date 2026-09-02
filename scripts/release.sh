@@ -80,7 +80,7 @@ fi
 if [[ "$next" != "$current" ]]; then
     sed -i "s/^version = \"$current\"$/version = \"$next\"/" Cargo.toml
     sed -i "s/^ecmd-derive = { version = \"$current\"/ecmd-derive = { version = \"$next\"/" Cargo.toml
-    cargo update --workspace --offline
+    cargo update --workspace
 fi
 
 notes=$(mktemp)
