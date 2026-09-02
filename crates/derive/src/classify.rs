@@ -78,11 +78,7 @@ pub fn inner_type_name(ty: &Type) -> Option<String> {
     Some(outer_type_name(inner))
 }
 
-/// Get the field ident (named fields only).
-///
-/// # Panics
-///
-/// Panics if called on a tuple struct field (upstream validates this).
+/// The field ident, which the upstream named-struct check guarantees
 #[expect(clippy::panic, reason = "proc macro invariant: only named structs")]
 pub fn field_ident(field: &Field) -> &Ident {
     field

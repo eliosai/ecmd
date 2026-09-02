@@ -1,6 +1,7 @@
 target/
-Cargo.lock
 *.pdb
+*.profraw
+junit.xml
 
 .DS_Store
 .idea/
@@ -8,5 +9,7 @@ Cargo.lock
 *.swp
 *.swo
 
-.claude/
+# Local agent state stays out; the skills link is tracked
+.claude/*
+!.claude/skills
 .mcp.json

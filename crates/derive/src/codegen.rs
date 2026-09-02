@@ -339,8 +339,7 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
     quote! { #checks #(#stmts)* }
 }
 
-/// Collect every missing required positional before assigning any of them,
-/// so the reported error names all of them, not just the first.
+/// Collect every missing required positional first so the error names all of them
 fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenStream {
     let mut checks = Vec::new();
     let mut idx = 0_usize;
