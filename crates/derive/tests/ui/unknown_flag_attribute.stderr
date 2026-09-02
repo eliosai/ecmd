@@ -1,0 +1,5 @@
+error: unknown flag attribute
+ --> tests/ui/unknown_flag_attribute.rs:6:25
+  |
+6 |     #[flag(short = 'v', loud)]
+  |                         ^^^^

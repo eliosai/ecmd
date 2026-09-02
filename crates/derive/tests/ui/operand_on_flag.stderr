@@ -1,0 +1,7 @@
+error: `operand` applies to a positional or Operands field, not a flag
+ --> tests/ui/operand_on_flag.rs:6:5
+  |
+6 | /     #[flag(short = 'v')]
+7 | |     #[operand(hide)]
+8 | |     verbose: bool,
+  | |_________________^

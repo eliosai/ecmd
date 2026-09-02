@@ -1602,3 +1602,137 @@ fn exclusive_groups_reject_only_cross_group_combinations() {
         }
     );
 }
+
+// ── Every operand and flag attribute at parse time and in help ───
+
+/// Wrap lines.
+#[derive(Command, Debug)]
+#[command(name = "fold", style = "gnu", help_style = "clap")]
+struct Attributed {
+    /// wrap at this column
+    #[flag(
+        short = 'w',
+        long = "width",
+        value_name = "N",
+        default = "80",
+        help_values("72", "80"),
+        help_label = "-w, --width <N>",
+        alias = "wrap",
+        visible_alias = "columns"
+    )]
+    width: Option<u32>,
+    /// the input file
+    #[operand(label = "FILE", default = "-")]
+    file: Option<String>,
+    /// more inputs
+    #[operand(spread, label = "MORE")]
+    more: Option<String>,
+    rest: Operands,
+}
+
+#[test]
+fn help_style_attribute_picks_the_dialect() {
+    assert_eq!(Attributed::def().help_style(), ecmd::HelpStyle::Clap);
+    let help = Attributed::def().help();
+    assert!(help.starts_with("Wrap lines.\n\nUsage: "));
+    assert!(help.contains("\nOptions:\n"));
+}
+
+#[test]
+fn flag_default_applies_when_the_flag_is_absent() {
+    assert_eq!(Attributed::parse(&[]).unwrap().width, Some(80));
+    assert_eq!(Attributed::parse(&["-w", "10"]).unwrap().width, Some(10));
+}
+
+#[test]
+fn flag_aliases_resolve_and_the_visible_one_shows() {
+    assert_eq!(Attributed::parse(&["--wrap=5"]).unwrap().width, Some(5));
+    assert_eq!(Attributed::parse(&["--columns=6"]).unwrap().width, Some(6));
+    let help = Attributed::def().help();
+    assert!(help.contains("[alias: --columns]"), "{help}");
+    assert!(!help.contains("--wrap"), "{help}");
+}
+
+#[test]
+fn flag_help_attributes_shape_the_option_row() {
+    let help = Attributed::def().help();
+    assert!(
+        help.contains(
+            "  -w, --width <N>  wrap at this column [default: 80] [possible values: 72, 80]"
+        ),
+        "{help}"
+    );
+}
+
+#[test]
+fn operand_attributes_shape_the_argument_rows() {
+    let help = Attributed::def().help();
+    assert!(
+        help.contains("  [FILE]     the input file [default: -]\n"),
+        "{help}"
+    );
+    assert!(help.contains("  [MORE]...  more inputs\n"), "{help}");
+    assert!(help.contains("  [rest]...  \n"), "{help}");
+}
+
+#[test]
+fn operand_default_applies_when_the_positional_is_absent() {
+    assert_eq!(Attributed::parse(&[]).unwrap().file.as_deref(), Some("-"));
+    assert_eq!(
+        Attributed::parse(&["a"]).unwrap().file.as_deref(),
+        Some("a")
+    );
+}
+
+#[derive(Command, Debug)]
+#[command(name = "count")]
+struct BadDefault {
+    #[flag(short = 'n', default = "many")]
+    count: Option<u32>,
+}
+
+#[test]
+fn flag_default_that_does_not_parse_is_an_invalid_value() {
+    assert_eq!(
+        BadDefault::parse(&[]).unwrap_err(),
+        ecmd::Error::InvalidValue {
+            flag: "-n".to_owned(),
+            value: "many".to_owned(),
+            reason: "invalid digit found in string".to_owned(),
+        }
+    );
+}
+
+#[derive(Command, Debug)]
+#[command(name = "cat")]
+struct RestDefault {
+    #[operand(default = "-")]
+    files: Operands,
+}
+
+#[test]
+fn rest_default_fills_an_empty_rest_slot() {
+    assert_eq!(&*RestDefault::parse(&[]).unwrap().files, &["-"]);
+    assert_eq!(
+        &*RestDefault::parse(&["a", "b"]).unwrap().files,
+        &["a", "b"]
+    );
+    assert_eq!(RestDefault::def().rest().unwrap().default(), Some("-"));
+}
+
+#[derive(Command, Debug)]
+#[command(name = "rm")]
+struct RestRequired {
+    #[operand(required)]
+    files: Operands,
+}
+
+#[test]
+fn rest_required_rejects_an_empty_rest_slot() {
+    assert_eq!(
+        RestRequired::parse(&[]).unwrap_err(),
+        ecmd::Error::MissingRequired(vec!["files".to_owned()])
+    );
+    assert_eq!(&*RestRequired::parse(&["a"]).unwrap().files, &["a"]);
+    assert!(RestRequired::def().rest().unwrap().is_required());
+}

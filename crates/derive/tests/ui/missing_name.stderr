@@ -1,0 +1,5 @@
+error: missing #[command(name = "...")]
+ --> tests/ui/missing_name.rs:4:2
+  |
+4 | #[command(style = "gnu")]
+  |  ^^^^^^^^^^^^^^^^^^^^^^^^

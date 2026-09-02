@@ -1,0 +1,6 @@
+error: a required positional has no default; make the field an Option
+ --> tests/ui/default_on_required_positional.rs:6:5
+  |
+6 | /     #[operand(default = "x")]
+7 | |     dir: String,
+  | |_______________^
