@@ -1,0 +1,6 @@
+error: a positional is required by its type; `required` applies to Operands
+ --> tests/ui/required_positional.rs:6:5
+  |
+6 | /     #[operand(required)]
+7 | |     dir: Option<String>,
+  | |_______________________^

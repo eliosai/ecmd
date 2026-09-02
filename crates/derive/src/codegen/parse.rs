@@ -10,6 +10,7 @@ use crate::classify::FieldRole;
 pub fn gen_parse(fields: &[ClassifiedField<'_>]) -> TokenStream {
     let inits = gen_inits(fields);
     let dispatch = gen_dispatch(fields);
+    let defaults = gen_flag_defaults(fields);
     let positionals = gen_positionals(fields);
     let names: Vec<_> = fields.iter().map(|cf| cf.ident).collect();
 
@@ -28,6 +29,7 @@ pub fn gen_parse(fields: &[ClassifiedField<'_>]) -> TokenStream {
             }
         }
 
+        #defaults
         #positionals
 
         Ok(Self { #(#names),* })
@@ -52,6 +54,26 @@ pub fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
                 }
                 FieldRole::RequiredPositional | FieldRole::Rest => quote! { let #id; },
             }
+        })
+        .collect();
+    quote! { #(#stmts)* }
+}
+
+/// A valued flag that never appeared takes its declared default
+pub fn gen_flag_defaults(fields: &[ClassifiedField<'_>]) -> TokenStream {
+    let stmts: Vec<_> = fields
+        .iter()
+        .filter_map(|cf| {
+            let FieldRole::ValuedFlag(attrs) = &cf.role else {
+                return None;
+            };
+            if attrs.default_value.is_empty() {
+                return None;
+            }
+            let id = cf.ident;
+            let default = &attrs.default_value;
+            let assign = gen_value_assign(id, cf.field, cf.id, quote! { #default });
+            Some(quote! { if #id.is_none() { let v = #default; #assign } })
         })
         .collect();
     quote! { #(#stmts)* }
@@ -84,7 +106,7 @@ pub fn gen_single_dispatch(
         FieldRole::ValuedFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
-            let assign = gen_value_assign(id, cf.field, ch);
+            let assign = gen_value_assign(id, cf.field, ch, quote! { v });
             Some(quote! { ::ecmd::Parsed::Value(#ch, v) => { #assign #resets } })
         }
         FieldRole::RepeatableValueFlag(attrs) => {
@@ -137,9 +159,15 @@ pub fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
         let id = cf.ident;
         match &cf.role {
             FieldRole::OptionalPositional => {
-                stmts.push(
-                    quote! { #id = scan.operands().get(#idx).map(|value| (*value).to_owned()); },
-                );
+                let fallback = if cf.operand.default_value.is_empty() {
+                    quote! { None }
+                } else {
+                    let default = &cf.operand.default_value;
+                    quote! { Some(#default.to_owned()) }
+                };
+                stmts.push(quote! {
+                    #id = scan.operands().get(#idx).map_or(#fallback, |value| Some((*value).to_owned()));
+                });
                 idx = idx.saturating_add(1);
             }
             FieldRole::RequiredPositional => {
@@ -149,10 +177,17 @@ pub fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
                 idx = idx.saturating_add(1);
             }
             FieldRole::Rest => {
+                let default = &cf.operand.default_value;
+                let empty = if default.is_empty() {
+                    quote! { rest }
+                } else {
+                    quote! { if rest.is_empty() { &[#default] } else { rest } }
+                };
                 stmts.push(quote! {
-                    #id = ::ecmd::Operands::from_args(
-                        scan.operands().get(#idx..).unwrap_or_default()
-                    );
+                    #id = {
+                        let rest = scan.operands().get(#idx..).unwrap_or_default();
+                        ::ecmd::Operands::from_args(#empty)
+                    };
                 });
             }
             _ => {}
@@ -178,6 +213,13 @@ pub fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenSt
                 });
                 idx = idx.saturating_add(1);
             }
+            FieldRole::Rest if cf.operand.required => {
+                checks.push(quote! {
+                    if scan.operands().len() <= #idx {
+                        __missing_required.push(#name.to_owned());
+                    }
+                });
+            }
             _ => {}
         }
     }
@@ -193,12 +235,13 @@ pub fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenSt
     }
 }
 
-pub fn gen_value_assign(id: &Ident, field: &Field, ch: char) -> TokenStream {
+/// Assign one value, given as a `&str` expression, into an `Option` field
+pub fn gen_value_assign(id: &Ident, field: &Field, ch: char, value: TokenStream) -> TokenStream {
     let inner = crate::classify::inner_type_name(&field.ty);
     if inner.as_deref() == Some("String") {
-        quote! { #id = Some((*v).to_owned()); }
+        quote! { #id = Some((*#value).to_owned()); }
     } else {
-        gen_parse_into(quote! { #id = Some }, ch)
+        gen_parse_into(quote! { #id = Some }, ch, value)
     }
 }
 
@@ -207,7 +250,7 @@ pub fn gen_repeatable_push(id: &Ident, field: &Field, ch: char) -> TokenStream {
     if inner.as_deref() == Some("String") {
         quote! { #id.push((*v).to_owned()); }
     } else {
-        gen_parse_into(quote! { #id.push }, ch)
+        gen_parse_into(quote! { #id.push }, ch, quote! { v })
     }
 }
 
@@ -215,12 +258,12 @@ pub fn gen_repeatable_push(id: &Ident, field: &Field, ch: char) -> TokenStream {
     clippy::needless_pass_by_value,
     reason = "quote! interpolation requires owned TokenStream"
 )]
-pub fn gen_parse_into(target: TokenStream, ch: char) -> TokenStream {
+pub fn gen_parse_into(target: TokenStream, ch: char, value: TokenStream) -> TokenStream {
     quote! {
-        #target(v.parse().map_err(|e| {
+        #target(#value.parse().map_err(|e| {
             ::ecmd::Error::InvalidValue {
                 flag: format!("-{}", #ch),
-                value: (*v).to_owned(),
+                value: (*#value).to_owned(),
                 reason: format!("{e}"),
             }
         })?);

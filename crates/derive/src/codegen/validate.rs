@@ -11,7 +11,39 @@ pub fn validate(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
     check_duplicate_flags(fields)?;
     check_operands_last(fields)?;
     check_positional_ordering(fields)?;
+    check_operand_attrs(fields)?;
     check_clears_targets(fields)
+}
+
+/// `required` belongs to the rest slot alone and a required positional carries no default
+pub fn check_operand_attrs(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
+    for cf in fields {
+        if let Some(message) = misplaced_operand_attr(cf) {
+            return Err(syn::Error::new_spanned(cf.field, message));
+        }
+    }
+    Ok(())
+}
+
+fn misplaced_operand_attr(cf: &ClassifiedField<'_>) -> Option<&'static str> {
+    let positional = matches!(
+        cf.role,
+        FieldRole::OptionalPositional | FieldRole::RequiredPositional
+    );
+    let tagged = cf.field.attrs.iter().any(|a| a.path().is_ident("operand"));
+    match &cf.role {
+        FieldRole::Rest => None,
+        _ if positional && cf.operand.required => {
+            Some("a positional is required by its type; `required` applies to Operands")
+        }
+        FieldRole::RequiredPositional if !cf.operand.default_value.is_empty() => {
+            Some("a required positional has no default; make the field an Option")
+        }
+        _ if !positional && tagged => {
+            Some("`operand` applies to a positional or Operands field, not a flag")
+        }
+        _ => None,
+    }
 }
 
 pub fn check_positional_ordering(fields: &[ClassifiedField<'_>]) -> syn::Result<()> {
