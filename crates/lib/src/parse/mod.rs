@@ -1,5 +1,7 @@
 //! POSIX and GNU argument scanning
 
+use core::fmt;
+
 use crate::error::Error;
 use crate::meta::{CommandDef, Owned, Static, Storage};
 use crate::polarity::Polarity;
@@ -11,16 +13,17 @@ mod config;
 mod cursor;
 mod long;
 mod numeric;
-mod reject;
 mod short;
+mod state;
 mod value;
 
-use classify::{ArgClass, classify, is_polar};
-use config::{ScanConfig, is_long, parsed_char};
+use classify::{ArgClass, classify};
+use config::{ScanConfig, is_long};
 use cursor::Cursor;
 use long::process_long;
 use numeric::{process_first_numeric, process_numeric_operand};
 use short::process_cluster;
+use state::State;
 
 /// How to handle unrecognized flag characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -154,40 +157,91 @@ impl FlagDef<Static> {
     }
 }
 
-/// Result of parsing a single flag occurrence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One flag occurrence the scanner recognized
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Parsed {
-    /// A boolean flag was set.
+pub enum Parsed<'a> {
+    /// A boolean flag
     Bool(char),
-    /// A valued flag with its argument.
-    Value(char, String),
-    /// A polarity flag was set.
+    /// A valued flag with its value
+    Value(char, &'a str),
+    /// A polarity flag with the sign it carried
     Polar(char, Polarity),
-    /// A polarity flag with a value.
-    PolarValue(char, Polarity, String),
+    /// A polarity flag with its sign and value
+    PolarValue(char, Polarity, &'a str),
 }
 
-/// Output of a successful `scan` call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(clippy::exhaustive_structs, reason = "result of scan")]
-pub struct ScanResult {
-    /// Parsed flag occurrences in order.
-    pub flags: Vec<Parsed>,
-    /// Remaining positional operands.
-    pub operands: Vec<String>,
-    /// Declared flags that require an external implementation.
-    pub unimplemented: Vec<String>,
+impl Parsed<'_> {
+    /// The identity of the flag this occurrence names
+    #[must_use]
+    pub const fn flag(&self) -> char {
+        match self {
+            Self::Bool(ch)
+            | Self::Value(ch, _)
+            | Self::Polar(ch, _)
+            | Self::PolarValue(ch, _, _) => *ch,
+        }
+    }
+}
+
+/// How the caller spelled one flag
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Spelling<'a> {
+    /// A short flag such as `-x`
+    Short(char),
+    /// A long option such as `--name`
+    Long(&'a str),
+    /// One whole argument such as `-5` or `+3:7`
+    Arg(&'a str),
+}
+
+impl fmt::Display for Spelling<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Short(ch) => write!(f, "-{ch}"),
+            Self::Long(name) => write!(f, "--{name}"),
+            Self::Arg(arg) => f.write_str(arg),
+        }
+    }
+}
+
+/// What one scan found: flags in order, operands, and the flags only an external command implements
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Scan<'a> {
+    flags: Vec<Parsed<'a>>,
+    operands: Vec<&'a str>,
+    unimplemented: Vec<Spelling<'a>>,
+}
+
+impl<'a> Scan<'a> {
+    /// Every flag occurrence in argument order
+    #[must_use]
+    pub fn flags(&self) -> &[Parsed<'a>] {
+        &self.flags
+    }
+
+    /// Every operand in argument order
+    #[must_use]
+    pub fn operands(&self) -> &[&'a str] {
+        &self.operands
+    }
+
+    /// Every flag that appeared but is declared as implemented elsewhere
+    #[must_use]
+    pub fn unimplemented(&self) -> &[Spelling<'a>] {
+        &self.unimplemented
+    }
 }
 
 /// Scan arguments against declared flags
-pub fn scan<S: Storage>(
-    args: &[&str],
-    flags: &[FlagDef<S>],
+pub fn scan<'a, S: Storage>(
+    args: &'a [&'a str],
+    flags: &'a [FlagDef<S>],
     on_unknown: OnUnknown,
     style: Style,
     permute: bool,
-) -> Result<ScanResult, Error> {
+) -> Result<Scan<'a>, Error> {
     scan_with_policy(
         args,
         flags,
@@ -200,99 +254,63 @@ pub fn scan<S: Storage>(
 
 /// Scan arguments with command-specific value and numeric policies
 #[doc(hidden)]
-pub fn scan_with_policy<S: Storage, P: Storage>(
-    args: &[&str],
-    flags: &[FlagDef<S>],
-    policy: Policy<'_, P>,
+pub fn scan_with_policy<'a, S: Storage, P: Storage>(
+    args: &'a [&'a str],
+    flags: &'a [FlagDef<S>],
+    policy: Policy<'a, P>,
     on_unknown: OnUnknown,
     style: Style,
     permute: bool,
-) -> Result<ScanResult, Error> {
-    let config = ScanConfig {
-        flags,
-        policy,
-        on_unknown,
-        style,
-    };
-    let mut result = ScanResult {
-        flags: Vec::new(),
-        operands: Vec::new(),
-        unimplemented: Vec::new(),
-    };
-    let has_polarity = flags.iter().any(|f| is_polar(&f.kind));
-    let gnu = style == Style::Gnu;
+) -> Result<Scan<'a>, Error> {
+    let config = ScanConfig::new(flags, policy, on_unknown, style);
+    let mut state = State::new(flags.len());
     let mut cursor = Cursor::new(args);
-
     while let Some(arg) = cursor.peek() {
-        if process_first_numeric(arg, &mut cursor, &config, &mut result)? {
-            continue;
-        }
-        if process_numeric_operand(arg, &mut cursor, &config, &mut result)? {
+        if process_first_numeric(arg, &mut cursor, &config, &mut state)?
+            || process_numeric_operand(arg, &mut cursor, &config, &mut state)?
+        {
             continue;
         }
         if arg == "--" {
             cursor.advance();
             break;
         }
-        if gnu && is_long(arg) {
-            let operand_count = result.operands.len();
+        let operands = state.operand_count();
+        if config.gnu() && is_long(arg) {
+            cursor.advance();
             let spec = arg.strip_prefix("--").unwrap_or_default();
-            if let Err(error) = process_long(spec, &mut cursor, &config, &mut result) {
-                pass_unknown_long(error, arg, on_unknown, &mut result.operands)?;
+            if let Err(error) = process_long(spec, &mut cursor, &config, &mut state) {
+                state.pass_unknown(error, arg, on_unknown)?;
             }
-            if !permute && result.operands.len() > operand_count {
-                break;
-            }
-            continue;
-        }
-        match classify(arg, has_polarity) {
-            ArgClass::Flags(polarity, chars) => {
-                let operand_count = result.operands.len();
-                process_cluster(chars, polarity, &mut cursor, &config, &mut result)?;
-                if !permute && result.operands.len() > operand_count {
-                    break;
+        } else {
+            match classify(arg, config.has_polarity) {
+                ArgClass::Flags(polarity, chars) => {
+                    cursor.advance();
+                    process_cluster(arg, chars, polarity, &mut cursor, &config, &mut state)?;
                 }
+                ArgClass::Operand if config.gnu() && permute => {
+                    cursor.advance();
+                    state.push_operand(arg);
+                }
+                ArgClass::Operand => break,
             }
-            // GNU permutation lets operands pass, and with permute off the first operand ends scanning
-            ArgClass::Operand if gnu && permute => {
-                result.operands.push(arg.to_owned());
-                cursor.advance();
-            }
-            ArgClass::Operand => break,
+        }
+        if !permute && state.operand_count() > operands {
+            break;
         }
     }
-
-    result
-        .operands
-        .extend(cursor.rest().iter().map(|s| (*s).to_owned()));
-    result.flags.retain(|parsed| {
-        !flags
-            .iter()
-            .any(|flag| flag.ch == parsed_char(parsed) && flag.kind == FlagKind::Noop)
-    });
-    Ok(result)
+    state.extend_operands(cursor.rest());
+    Ok(state.finish())
 }
 
-fn pass_unknown_long(
-    error: Error,
-    arg: &str,
-    on_unknown: OnUnknown,
-    operands: &mut Vec<String>,
-) -> Result<(), Error> {
-    if on_unknown == OnUnknown::PassThrough && matches!(error, Error::UnknownFlag(_)) {
-        operands.push(arg.to_owned());
-        Ok(())
-    } else {
-        Err(error)
-    }
-}
-
+/// The value, numeric and exclusivity rules one command adds to the standard scan
 #[doc(hidden)]
 pub struct Policy<'a, S: Storage> {
     value_rules: &'a [ValueRule<S>],
     numeric_operands: &'a [NumericOperandRule],
     first_numeric_value: Option<char>,
     exact_long: bool,
+    implicit_short_version: bool,
     equals_only: &'a [char],
     attached_values: &'a [char],
     separated_values: &'a [char],
@@ -300,12 +318,13 @@ pub struct Policy<'a, S: Storage> {
     exclusive_groups: &'a [ExclusiveRule],
 }
 
-impl<S: Storage> Policy<'_, S> {
+impl<'a, S: Storage> Policy<'a, S> {
     const STANDARD: Policy<'static, Static> = Policy {
         value_rules: &[],
         numeric_operands: &[],
         first_numeric_value: None,
         exact_long: false,
+        implicit_short_version: true,
         equals_only: &[],
         attached_values: &[],
         separated_values: &[],
@@ -313,13 +332,15 @@ impl<S: Storage> Policy<'_, S> {
         exclusive_groups: &[],
     };
 
+    /// The policy one command definition declares
     #[doc(hidden)]
-    pub fn from_definition(definition: &CommandDef<S>) -> Policy<'_, S> {
+    pub fn from_definition(definition: &'a CommandDef<S>) -> Self {
         Policy {
             value_rules: definition.value_rules.as_ref(),
             numeric_operands: definition.numeric_operands.as_ref(),
             first_numeric_value: definition.first_numeric_value,
             exact_long: definition.exact_long,
+            implicit_short_version: !definition.no_implicit_version,
             equals_only: definition.equals_only.as_ref(),
             attached_values: definition.attached_values.as_ref(),
             separated_values: definition.separated_values.as_ref(),
@@ -328,7 +349,7 @@ impl<S: Storage> Policy<'_, S> {
         }
     }
 
-    fn value(&self, ch: char) -> Option<&ValueRule<S>> {
+    fn value(&self, ch: char) -> Option<&'a ValueRule<S>> {
         self.value_rules.iter().find(|rule| rule.ch == ch)
     }
 

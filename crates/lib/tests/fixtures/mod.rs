@@ -67,27 +67,6 @@ pub const fn polar_flag(ch: char) -> FlagDef {
     }
 }
 
-pub const fn no_implicit_version_marker() -> FlagDef {
-    FlagDef {
-        ch: '\0',
-        kind: FlagKind::Noop,
-        long: "\0no-implicit-version",
-        aliases: &[],
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: true,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
-}
-
 pub const fn noop_flag(ch: char) -> FlagDef {
     FlagDef {
         ch,

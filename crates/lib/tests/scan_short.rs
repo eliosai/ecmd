@@ -11,24 +11,25 @@ mod fixtures;
 use pretty_assertions::assert_eq;
 
 use ecmd::error::Error;
-use ecmd::parse::{FlagDef, FlagKind, OnUnknown, Parsed, scan};
+use ecmd::meta::CommandDef;
+use ecmd::parse::{FlagDef, FlagKind, OnUnknown, Parsed, Spelling, scan};
 use ecmd::polarity::Polarity;
 use ecmd::style::Style;
-use fixtures::{bool_flag, no_implicit_version_marker, noop_flag, polar_flag, value_flag};
+use fixtures::{bool_flag, noop_flag, polar_flag, value_flag};
 
 #[test]
 fn empty_args_returns_empty() {
     let r = scan::<ecmd::meta::Static>(&[], &[], OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert!(r.flags.is_empty());
-    assert!(r.operands.is_empty());
+    assert!(r.flags().is_empty());
+    assert!(r.operands().is_empty());
 }
 
 #[test]
 fn single_bool_flag() {
     let flags = [bool_flag('v')];
     let r = scan(&["-v"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Bool('v')]);
-    assert!(r.operands.is_empty());
+    assert_eq!(r.flags(), [Parsed::Bool('v')]);
+    assert!(r.operands().is_empty());
 }
 
 #[test]
@@ -36,7 +37,7 @@ fn bundled_bool_flags() {
     let flags = [bool_flag('a'), bool_flag('b'), bool_flag('c')];
     let r = scan(&["-abc"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
     assert_eq!(
-        r.flags,
+        r.flags(),
         [Parsed::Bool('a'), Parsed::Bool('b'), Parsed::Bool('c'),]
     );
 }
@@ -45,8 +46,8 @@ fn bundled_bool_flags() {
 fn double_dash_terminates_flags() {
     let flags = [bool_flag('v')];
     let r = scan(&["--", "-v"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert!(r.flags.is_empty());
-    assert_eq!(r.operands, ["-v"]);
+    assert!(r.flags().is_empty());
+    assert_eq!(r.operands(), ["-v"]);
 }
 
 #[test]
@@ -60,8 +61,8 @@ fn operands_after_flags() {
         true,
     )
     .unwrap();
-    assert_eq!(r.flags, [Parsed::Bool('v')]);
-    assert_eq!(r.operands, ["file.txt"]);
+    assert_eq!(r.flags(), [Parsed::Bool('v')]);
+    assert_eq!(r.operands(), ["file.txt"]);
 }
 
 #[test]
@@ -75,8 +76,8 @@ fn valued_flag_separate() {
         true,
     )
     .unwrap();
-    assert_eq!(r.flags, [Parsed::Value('o', "file".into())]);
-    assert!(r.operands.is_empty());
+    assert_eq!(r.flags(), [Parsed::Value('o', "file")]);
+    assert!(r.operands().is_empty());
 }
 
 #[test]
@@ -90,38 +91,38 @@ fn valued_flag_separate_with_trailing() {
         true,
     )
     .unwrap();
-    assert_eq!(r.flags, [Parsed::Value('o', "file".into())]);
-    assert_eq!(r.operands, ["rest"]);
+    assert_eq!(r.flags(), [Parsed::Value('o', "file")]);
+    assert_eq!(r.operands(), ["rest"]);
 }
 
 #[test]
 fn valued_flag_stuck() {
     let flags = [value_flag('o')];
     let r = scan(&["-ofile"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Value('o', "file".into())]);
-    assert!(r.operands.is_empty());
+    assert_eq!(r.flags(), [Parsed::Value('o', "file")]);
+    assert!(r.operands().is_empty());
 }
 
 #[test]
 fn valued_flag_stuck_strips_equals_separator() {
     let flags = [value_flag('o')];
     let r = scan(&["-o=file"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Value('o', "file".into())]);
-    assert!(r.operands.is_empty());
+    assert_eq!(r.flags(), [Parsed::Value('o', "file")]);
+    assert!(r.operands().is_empty());
 }
 
 #[test]
 fn valued_flag_stuck_strips_only_one_equals() {
     let flags = [value_flag('o')];
     let r = scan(&["-o==file"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Value('o', "=file".into())]);
+    assert_eq!(r.flags(), [Parsed::Value('o', "=file")]);
 }
 
 #[test]
 fn valued_flag_stuck_bare_equals_is_empty_value() {
     let flags = [value_flag('o')];
     let r = scan(&["-o="], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Value('o', String::new())]);
+    assert_eq!(r.flags(), [Parsed::Value('o', "")]);
 }
 
 #[test]
@@ -142,22 +143,16 @@ fn bundled_bool_then_valued() {
         true,
     )
     .unwrap();
-    assert_eq!(
-        r.flags,
-        [Parsed::Bool('v'), Parsed::Value('o', "file".into()),]
-    );
-    assert!(r.operands.is_empty());
+    assert_eq!(r.flags(), [Parsed::Bool('v'), Parsed::Value('o', "file"),]);
+    assert!(r.operands().is_empty());
 }
 
 #[test]
 fn bundled_bool_then_valued_stuck() {
     let flags = [bool_flag('v'), value_flag('o')];
     let r = scan(&["-vofile"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(
-        r.flags,
-        [Parsed::Bool('v'), Parsed::Value('o', "file".into()),]
-    );
-    assert!(r.operands.is_empty());
+    assert_eq!(r.flags(), [Parsed::Bool('v'), Parsed::Value('o', "file"),]);
+    assert!(r.operands().is_empty());
 }
 
 #[test]
@@ -172,13 +167,10 @@ fn multiple_valued_flags_in_sequence() {
     )
     .unwrap();
     assert_eq!(
-        r.flags,
-        [
-            Parsed::Value('o', "out".into()),
-            Parsed::Value('d', "dir".into()),
-        ]
+        r.flags(),
+        [Parsed::Value('o', "out"), Parsed::Value('d', "dir"),]
     );
-    assert!(r.operands.is_empty());
+    assert!(r.operands().is_empty());
 }
 
 #[test]
@@ -194,7 +186,8 @@ fn gnu_implicit_short_help_and_version_are_actions() {
         ("-h", Error::HelpRequested),
         ("-V", Error::VersionRequested),
     ] {
-        let result = scan::<ecmd::meta::Static>(&[arg], &[], OnUnknown::Reject, Style::Gnu, true);
+        let args = [arg];
+        let result = scan::<ecmd::meta::Static>(&args, &[], OnUnknown::Reject, Style::Gnu, true);
         assert_eq!(result.unwrap_err(), expected);
     }
 }
@@ -202,8 +195,8 @@ fn gnu_implicit_short_help_and_version_are_actions() {
 #[test]
 fn gnu_reserved_actions_reject_inline_values() {
     for option in ["--help=value", "--version=value"] {
-        let result =
-            scan::<ecmd::meta::Static>(&[option], &[], OnUnknown::Reject, Style::Gnu, true);
+        let args = [option];
+        let result = scan::<ecmd::meta::Static>(&args, &[], OnUnknown::Reject, Style::Gnu, true);
         let (flag, value) = option.split_once('=').unwrap();
         assert_eq!(
             result.unwrap_err(),
@@ -216,19 +209,28 @@ fn gnu_reserved_actions_reject_inline_values() {
 }
 
 #[test]
-fn no_implicit_version_marker_rejects_short_v_but_keeps_help() {
-    let flags = [no_implicit_version_marker()];
-    let result = scan(&["-V"], &flags, OnUnknown::Reject, Style::Gnu, true);
-    assert_eq!(result.unwrap_err(), Error::UnknownFlag("-V".to_owned()));
-    let result = scan(&["-h"], &flags, OnUnknown::Reject, Style::Gnu, true);
-    assert_eq!(result.unwrap_err(), Error::HelpRequested);
+fn no_implicit_version_rejects_short_v_but_keeps_help_and_long_version() {
+    let def = CommandDef {
+        style: Style::Gnu,
+        no_implicit_version: true,
+        ..CommandDef::EMPTY
+    };
+    assert_eq!(
+        def.scan(&["-V"]).unwrap_err(),
+        Error::UnknownFlag("-V".to_owned())
+    );
+    assert_eq!(def.scan(&["-h"]).unwrap_err(), Error::HelpRequested);
+    assert_eq!(
+        def.scan(&["--version"]).unwrap_err(),
+        Error::VersionRequested
+    );
 }
 
 #[test]
 fn declared_gnu_short_help_and_version_characters_win() {
     let flags = [bool_flag('h'), bool_flag('V')];
     let result = scan(&["-hV"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
-    assert_eq!(result.flags, [Parsed::Bool('h'), Parsed::Bool('V')]);
+    assert_eq!(result.flags(), [Parsed::Bool('h'), Parsed::Bool('V')]);
 }
 
 #[test]
@@ -248,8 +250,8 @@ fn passthrough_unknown_becomes_operand() {
         true,
     )
     .unwrap();
-    assert!(r.flags.is_empty());
-    assert_eq!(r.operands, ["-nea"]);
+    assert!(r.flags().is_empty());
+    assert_eq!(r.operands(), ["-nea"]);
 }
 
 #[test]
@@ -263,8 +265,8 @@ fn passthrough_all_known_still_parses() {
         true,
     )
     .unwrap();
-    assert_eq!(r.flags, [Parsed::Bool('n'), Parsed::Bool('e')]);
-    assert_eq!(r.operands, ["hello"]);
+    assert_eq!(r.flags(), [Parsed::Bool('n'), Parsed::Bool('e')]);
+    assert_eq!(r.operands(), ["hello"]);
 }
 
 #[test]
@@ -278,8 +280,8 @@ fn passthrough_first_char_unknown() {
         true,
     )
     .unwrap();
-    assert!(r.flags.is_empty());
-    assert_eq!(r.operands, ["-xyz", "rest"]);
+    assert!(r.flags().is_empty());
+    assert_eq!(r.operands(), ["-xyz", "rest"]);
 }
 
 #[test]
@@ -293,36 +295,36 @@ fn passthrough_value_flag_stuck_still_parses() {
         true,
     )
     .unwrap();
-    assert_eq!(r.flags, [Parsed::Value('o', "file".into())]);
-    assert!(r.operands.is_empty());
+    assert_eq!(r.flags(), [Parsed::Value('o', "file")]);
+    assert!(r.operands().is_empty());
 }
 
 #[test]
 fn polarity_on() {
     let flags = [polar_flag('x')];
     let r = scan(&["-x"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Polar('x', Polarity::On)]);
+    assert_eq!(r.flags(), [Parsed::Polar('x', Polarity::On)]);
 }
 
 #[test]
 fn polarity_off() {
     let flags = [polar_flag('x')];
     let r = scan(&["+x"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Polar('x', Polarity::Off)]);
+    assert_eq!(r.flags(), [Parsed::Polar('x', Polarity::Off)]);
 }
 
 #[test]
 fn plus_prefix_only_when_polarity_flags_exist() {
     let flags = [bool_flag('x')];
     let r = scan(&["+x"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.operands, ["+x"]);
+    assert_eq!(r.operands(), ["+x"]);
 }
 
 #[test]
 fn noop_flag_accepted_silently() {
     let flags = [bool_flag('r'), noop_flag('e')];
     let r = scan(&["-re"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.flags, [Parsed::Bool('r')]);
+    assert_eq!(r.flags(), [Parsed::Bool('r')]);
 }
 
 #[test]
@@ -337,7 +339,7 @@ fn noop_flag_repetition_is_rejected_in_gnu_style() {
 fn bare_dash_is_operand() {
     let flags = [bool_flag('v')];
     let r = scan(&["-"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
-    assert_eq!(r.operands, ["-"]);
+    assert_eq!(r.operands(), ["-"]);
 }
 
 #[test]
@@ -351,8 +353,8 @@ fn multiple_flag_groups() {
         true,
     )
     .unwrap();
-    assert_eq!(r.flags, [Parsed::Bool('a'), Parsed::Bool('b')]);
-    assert_eq!(r.operands, ["file"]);
+    assert_eq!(r.flags(), [Parsed::Bool('a'), Parsed::Bool('b')]);
+    assert_eq!(r.operands(), ["file"]);
 }
 
 #[test]
@@ -384,10 +386,10 @@ fn polar_value_on() {
     )
     .unwrap();
     assert_eq!(
-        r.flags,
-        [Parsed::PolarValue('o', Polarity::On, "errexit".into())]
+        r.flags(),
+        [Parsed::PolarValue('o', Polarity::On, "errexit")]
     );
-    assert!(r.operands.is_empty());
+    assert!(r.operands().is_empty());
 }
 
 #[test]
@@ -419,10 +421,10 @@ fn polar_value_off() {
     )
     .unwrap();
     assert_eq!(
-        r.flags,
-        [Parsed::PolarValue('o', Polarity::Off, "verbose".into())]
+        r.flags(),
+        [Parsed::PolarValue('o', Polarity::Off, "verbose")]
     );
-    assert!(r.operands.is_empty());
+    assert!(r.operands().is_empty());
 }
 
 #[test]
@@ -454,8 +456,37 @@ fn polar_value_stuck() {
     )
     .unwrap();
     assert_eq!(
-        r.flags,
-        [Parsed::PolarValue('o', Polarity::On, "errexit".into())]
+        r.flags(),
+        [Parsed::PolarValue('o', Polarity::On, "errexit")]
     );
-    assert!(r.operands.is_empty());
+    assert!(r.operands().is_empty());
+}
+
+#[test]
+fn unimplemented_short_flag_is_reported_as_spelled() {
+    let flags = [
+        bool_flag('a'),
+        FlagDef {
+            implemented: false,
+            ..bool_flag('x')
+        },
+    ];
+    let r = scan(&["-ax"], &flags, OnUnknown::Reject, Style::Posix, true).unwrap();
+    assert_eq!(r.flags(), [Parsed::Bool('a'), Parsed::Bool('x')]);
+    assert_eq!(r.unimplemented(), [Spelling::Short('x')]);
+    assert_eq!(Spelling::Short('x').to_string(), "-x");
+}
+
+#[test]
+fn noop_flag_leaves_no_trace_in_the_flags() {
+    let flags = [bool_flag('a'), noop_flag('f')];
+    let r = scan(
+        &["-fa", "-f"],
+        &flags,
+        OnUnknown::Reject,
+        Style::Posix,
+        true,
+    )
+    .unwrap();
+    assert_eq!(r.flags(), [Parsed::Bool('a')]);
 }
