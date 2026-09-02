@@ -4,9 +4,6 @@ Only unfinished work belongs here. Git history carries completed plans and measu
 
 ## 1.0
 
-- Split `parse.rs` into `parse/` and move its tests to `crates/lib/tests/scan_*.rs`
-- Collapse the short and long value paths into one, return borrowed `Scan<'a>`, build labels only inside `Err`
-- Split `meta.rs` into `def/` and `help/` and move its tests to `crates/lib/tests/help_*.rs`
 - Replace `CommandDef<S: Storage>` with one `Def` over `Cow<'static>`, delete `archive.rs` and `into_owned`
 - Split `codegen.rs`, honor `#[operand(required)]`, `default =`, `values(...)` and `visible_alias` at parse time
 - Collapse the root API to the trait, `Def`, `Flag`, `Scan`, `Parsed`, `Error`, `Operands`, `Polarity`, `PolarVal`, `Style`, `HelpStyle`
