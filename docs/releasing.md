@@ -30,7 +30,7 @@ and waits for the index), and creates the GitHub release with the notes for that
 
 ## What the repository needs
 
-- the `CARGO_REGISTRY_TOKEN` secret, a crates.io token that may publish `ecmd` and `ecmd-derive`
+- trusted publishing on crates.io for `ecmd` and `ecmd-derive`, naming the `eliosai/ecmd` repository and the `release.yml` workflow, so the job mints a short-lived token through GitHub's OIDC and holds no crates.io secret
 - the `RELEASE_DEPLOY_KEY` secret, the private half of the `release` deploy key with write access,
   which `actions/checkout` installs so the push comes from the deploy key
 - the `main` ruleset, which requires a pull request with one approval and the `gate`, `msrv`,
