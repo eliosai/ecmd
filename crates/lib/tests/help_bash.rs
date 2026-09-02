@@ -1,9 +1,9 @@
 //! The bash builtin help dialect against real `help` output
 
+use ecmd::Flag;
 mod fixtures;
 
-use ecmd::parse::{FlagDef, FlagKind};
-use fixtures::{ALIAS_FLAGS, make_def};
+use fixtures::{alias_flags, make_def};
 
 #[test]
 fn help_alias_matches_bash() {
@@ -11,7 +11,7 @@ fn help_alias_matches_bash() {
         "alias",
         "Define or display aliases.",
         "alias [-p] [name[=value] ... ]",
-        &ALIAS_FLAGS,
+        &alias_flags(),
         &[
             "Without arguments, `alias' prints the list of aliases in the reusable",
             "form `alias NAME=VALUE' on standard output.",
@@ -135,62 +135,9 @@ fn help_return_matches_bash() {
 }
 
 // ── Test multi-line flag descriptions (cd-style) ───────────
-static CD_FLAGS: [FlagDef; 3] = [
-    FlagDef {
-        ch: 'L',
-        long: "",
-        aliases: &[],
-        kind: FlagKind::Bool,
-        clears: &['P'],
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-        desc: "force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'",
-    },
-    FlagDef {
-        ch: 'P',
-        long: "",
-        aliases: &[],
-        kind: FlagKind::Bool,
-        clears: &['L'],
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-        desc: "use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'",
-    },
-    FlagDef {
-        ch: 'e',
-        long: "",
-        aliases: &[],
-        kind: FlagKind::Bool,
-        clears: &[],
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-        desc: "if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status",
-    },
-];
+fn cd_flags() -> Vec<Flag> {
+    vec![Flag::new('L').desc("force symbolic links to be followed: resolve symbolic\nlinks in DIR after processing instances of `..'").once(), Flag::new('P').desc("use the physical directory structure without following\nsymbolic links: resolve symbolic links in DIR before\nprocessing instances of `..'").once(), Flag::new('e').desc("if the -P option is supplied, and the current working\ndirectory cannot be determined successfully, exit with\na non-zero status").once()]
+}
 
 #[test]
 fn help_cd_multiline_flags() {
@@ -198,7 +145,7 @@ fn help_cd_multiline_flags() {
         "cd",
         "Change the shell working directory.",
         "cd [-L|[-P [-e]]] [-@] [dir]",
-        &CD_FLAGS,
+        &cd_flags(),
         &[
             "Change the current directory to DIR.  The default DIR is the value of the",
             "HOME shell variable. If DIR is \"-\", it is converted to $OLDPWD.",
@@ -278,7 +225,7 @@ fn usage_ignores_short_doc() {
         "alias",
         "Define or display aliases.",
         "alias [-p] [name[=value] ... ]",
-        &ALIAS_FLAGS,
+        &alias_flags(),
         &[],
         &[],
         &[],
@@ -292,7 +239,7 @@ fn help_falls_back_to_usage_when_no_short_doc() {
         "alias",
         "Define or display aliases.",
         "",
-        &ALIAS_FLAGS,
+        &alias_flags(),
         &[],
         &[],
         &[],

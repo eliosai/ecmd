@@ -14,10 +14,6 @@ pub enum Style {
 /// The help dialect a command renders, independent of its parsing style
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
-#[expect(
-    clippy::module_name_repetitions,
-    reason = "the style module owns both styles"
-)]
 pub enum HelpStyle {
     /// `name: usage` with an indented body, as bash prints its builtins.
     #[default]

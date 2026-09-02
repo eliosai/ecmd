@@ -1,18 +1,18 @@
 //! GNU long options such as `--name` and `--name=value`
 
+use crate::def::{Flag, FlagKind};
 use crate::error::Error;
-use crate::meta::Storage;
 use crate::polarity::Polarity;
 
 use super::config::ScanConfig;
 use super::cursor::Cursor;
 use super::state::State;
 use super::value::{Form, take_value};
-use super::{FlagDef, FlagKind, Parsed, Spelling};
+use super::{Parsed, Spelling};
 
 /// Outcome of resolving a long option name against the declared flags
-pub enum LongMatch<'a, S: Storage> {
-    Flag(usize, &'a FlagDef<S>),
+pub enum LongMatch<'a> {
+    Flag(usize, &'a Flag),
     Help,
     Version,
     Ambiguous,
@@ -20,10 +20,10 @@ pub enum LongMatch<'a, S: Storage> {
 }
 
 /// One `name` or `name=value` spec whose `--` token the cursor has moved past
-pub fn process_long<'a, S: Storage, P: Storage>(
+pub fn process_long<'a>(
     spec: &'a str,
     cursor: &mut Cursor<'a>,
-    config: &ScanConfig<'a, S, P>,
+    config: &ScanConfig<'a>,
     state: &mut State<'a>,
 ) -> Result<(), Error> {
     let (name, inline) = spec
@@ -31,8 +31,8 @@ pub fn process_long<'a, S: Storage, P: Storage>(
         .map_or((spec, None), |(name, value)| (name, Some(value)));
     let spelling = Spelling::Long(name);
     match resolve_long(name, config) {
-        LongMatch::Flag(position, def) => {
-            apply_long(position, def, inline, cursor, config, state, spelling)
+        LongMatch::Flag(position, flag) => {
+            apply_long(position, flag, inline, cursor, config, state, spelling)
         }
         LongMatch::Help | LongMatch::Version if inline.is_some() => Err(Error::UnexpectedValue {
             flag: spelling.to_string(),
@@ -46,17 +46,17 @@ pub fn process_long<'a, S: Storage, P: Storage>(
 }
 
 /// Record a resolved long flag, pulling a value from `=inline` or the next argument
-fn apply_long<'a, S: Storage, P: Storage>(
+fn apply_long<'a>(
     position: usize,
-    def: &'a FlagDef<S>,
+    flag: &'a Flag,
     inline: Option<&'a str>,
     cursor: &mut Cursor<'a>,
-    config: &ScanConfig<'a, S, P>,
+    config: &ScanConfig<'a>,
     state: &mut State<'a>,
     spelling: Spelling<'a>,
 ) -> Result<(), Error> {
-    let parsed = match def.kind {
-        FlagKind::Noop => Parsed::Bool(def.ch),
+    let parsed = match flag.flag_kind() {
+        FlagKind::Noop => Parsed::Bool(flag.id()),
         FlagKind::Bool | FlagKind::Polar => {
             if let Some(value) = inline {
                 return Err(Error::UnexpectedValue {
@@ -64,37 +64,34 @@ fn apply_long<'a, S: Storage, P: Storage>(
                     value: value.to_owned(),
                 });
             }
-            if def.kind == FlagKind::Bool {
-                Parsed::Bool(def.ch)
+            if flag.flag_kind() == FlagKind::Bool {
+                Parsed::Bool(flag.id())
             } else {
-                Parsed::Polar(def.ch, Polarity::On)
+                Parsed::Polar(flag.id(), Polarity::On)
             }
         }
         FlagKind::Value | FlagKind::PolarValue => {
-            let value = take_value(def, inline, cursor, config, spelling, Form::Long)?;
-            if def.kind == FlagKind::Value {
-                Parsed::Value(def.ch, value)
+            let value = take_value(flag, inline, cursor, config, spelling, Form::Long)?;
+            if flag.flag_kind() == FlagKind::Value {
+                Parsed::Value(flag.id(), value)
             } else {
-                Parsed::PolarValue(def.ch, Polarity::On, value)
+                Parsed::PolarValue(flag.id(), Polarity::On, value)
             }
         }
     };
-    state.record(config, position, def, parsed, spelling)
+    state.record(config, position, flag, parsed, spelling)
 }
 
 /// An exact name wins; otherwise an unambiguous prefix, unless the command demands exact names
-pub fn resolve_long<'a, S: Storage, P: Storage>(
-    name: &str,
-    config: &ScanConfig<'a, S, P>,
-) -> LongMatch<'a, S> {
+pub fn resolve_long<'a>(name: &str, config: &ScanConfig<'a>) -> LongMatch<'a> {
     if !name.is_empty()
-        && let Some((position, def)) = config
+        && let Some((position, flag)) = config
             .flags
             .iter()
             .enumerate()
-            .find(|(_, flag)| long_names(flag).any(|long| long == name))
+            .find(|(_, flag)| flag.answers_to(name))
     {
-        return LongMatch::Flag(position, def);
+        return LongMatch::Flag(position, flag);
     }
     match name {
         "help" => LongMatch::Help,
@@ -104,41 +101,21 @@ pub fn resolve_long<'a, S: Storage, P: Storage>(
     }
 }
 
-/// Every long name a flag answers to: its long, its aliases, and its visible aliases
-fn long_names<S: Storage>(flag: &FlagDef<S>) -> impl Iterator<Item = &str> {
-    core::iter::once(flag.long.as_ref())
-        .chain(flag.aliases.as_ref().iter().map(AsRef::as_ref))
-        .chain(
-            flag.visible_aliases
-                .as_ref()
-                .iter()
-                .map(AsRef::as_ref)
-                .filter(|alias| alias.chars().count() > 1),
-        )
-        .filter(|name| !name.is_empty())
-}
-
 /// The one declared long, or reserved action, that `name` is a prefix of
-fn infer_long<'a, S: Storage, P: Storage>(
-    name: &str,
-    config: &ScanConfig<'a, S, P>,
-) -> LongMatch<'a, S> {
+fn infer_long<'a>(name: &str, config: &ScanConfig<'a>) -> LongMatch<'a> {
     if name.is_empty() {
         return LongMatch::Unknown;
     }
     let mut found = LongMatch::Unknown;
     let mut count = 0_u32;
-    for (position, def) in config.flags.iter().enumerate() {
-        if long_names(def).any(|long| long.starts_with(name)) {
-            found = LongMatch::Flag(position, def);
+    for (position, flag) in config.flags.iter().enumerate() {
+        if flag.long_names().any(|long| long.starts_with(name)) {
+            found = LongMatch::Flag(position, flag);
             count = count.saturating_add(1);
         }
     }
     for (action, hit) in [("help", LongMatch::Help), ("version", LongMatch::Version)] {
-        let shadowed = config
-            .flags
-            .iter()
-            .any(|flag| long_names(flag).any(|long| long == action));
+        let shadowed = config.flags.iter().any(|flag| flag.answers_to(action));
         if action.starts_with(name) && !shadowed {
             found = hit;
             count = count.saturating_add(1);

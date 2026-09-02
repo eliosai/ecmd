@@ -1,14 +1,13 @@
 //! Pulling a value out of a cluster, an `=`, or the next argument
 
+use crate::def::{Flag, ValueMode};
 use crate::error::Error;
-use crate::meta::Storage;
-use crate::policy::ValueMode;
 
+use super::Spelling;
 use super::config::ScanConfig;
 use super::cursor::Cursor;
 use super::long::{LongMatch, resolve_long};
 use super::numeric::is_numbering_spec;
-use super::{FlagDef, Spelling};
 
 /// Whether a flag was spelled short, and then whether it stood alone in its cluster
 #[derive(Clone, Copy)]
@@ -17,17 +16,39 @@ pub enum Form<'a> {
     Long,
 }
 
-/// The value one valued flag takes, from what was attached or from the cursor
-pub fn take_value<'a, S: Storage, P: Storage>(
-    def: &FlagDef<S>,
+/// The value one valued flag takes, checked against the values it accepts
+pub fn take_value<'a>(
+    flag: &Flag,
     attached: Option<&'a str>,
     cursor: &mut Cursor<'a>,
-    config: &ScanConfig<'a, S, P>,
+    config: &ScanConfig<'a>,
     spelling: Spelling<'a>,
     form: Form<'a>,
 ) -> Result<&'a str, Error> {
-    let ch = def.ch;
-    let policy = &config.policy;
+    let value = pick_value(flag, attached, cursor, config, spelling, form)?;
+    if flag.accepted_values().len() > 0 && !flag.accepted_values().any(|accepted| accepted == value)
+    {
+        let accepted: Vec<&str> = flag.accepted_values().collect();
+        return Err(Error::InvalidValue {
+            flag: spelling.to_string(),
+            value: value.to_owned(),
+            reason: format!("expected one of {}", accepted.join(", ")),
+        });
+    }
+    Ok(value)
+}
+
+/// The value from what was attached, or from the cursor under the flag's value rule
+fn pick_value<'a>(
+    flag: &Flag,
+    attached: Option<&'a str>,
+    cursor: &mut Cursor<'a>,
+    config: &ScanConfig<'a>,
+    spelling: Spelling<'a>,
+    form: Form<'a>,
+) -> Result<&'a str, Error> {
+    let ch = flag.id();
+    let policy = config.policy;
     if let Some(value) = attached {
         return match form {
             Form::Short { cluster, .. } if policy.requires_separated(ch) => {
@@ -47,7 +68,7 @@ pub fn take_value<'a, S: Storage, P: Storage>(
         _ => {}
     }
     let Some(rule) = policy.value(ch) else {
-        return take_plain(def, cursor, config, spelling);
+        return take_plain(flag, cursor, config, spelling);
     };
     let default = rule.default.as_ref();
     match rule.mode {
@@ -72,15 +93,15 @@ pub fn take_value<'a, S: Storage, P: Storage>(
         ValueMode::ExactShortDefault => match form {
             Form::Short { exact: true, .. } => Ok(default),
             Form::Short { .. } => take_past_boundary(cursor, config, spelling),
-            Form::Long => take_plain(def, cursor, config, spelling),
+            Form::Long => take_plain(flag, cursor, config, spelling),
         },
     }
 }
 
 /// The next argument unless it reads as an option, which leaves the value missing
-fn take_past_boundary<'a, S: Storage, P: Storage>(
+fn take_past_boundary<'a>(
     cursor: &mut Cursor<'a>,
-    config: &ScanConfig<'a, S, P>,
+    config: &ScanConfig<'a>,
     spelling: Spelling<'a>,
 ) -> Result<&'a str, Error> {
     if cursor
@@ -95,25 +116,25 @@ fn take_past_boundary<'a, S: Storage, P: Storage>(
 }
 
 /// The next argument as the value, after refusing a declared option in its place
-fn take_plain<'a, S: Storage, P: Storage>(
-    def: &FlagDef<S>,
+fn take_plain<'a>(
+    flag: &Flag,
     cursor: &mut Cursor<'a>,
-    config: &ScanConfig<'a, S, P>,
+    config: &ScanConfig<'a>,
     spelling: Spelling<'a>,
 ) -> Result<&'a str, Error> {
-    reject_option_value(cursor.peek(), def, config, spelling)?;
+    reject_option_value(cursor.peek(), flag, config, spelling)?;
     cursor
         .take()
         .ok_or_else(|| Error::MissingValue(spelling.to_string()))
 }
 
-fn reject_option_value<S: Storage, P: Storage>(
+fn reject_option_value(
     value: Option<&str>,
-    def: &FlagDef<S>,
-    config: &ScanConfig<'_, S, P>,
+    flag: &Flag,
+    config: &ScanConfig<'_>,
     spelling: Spelling<'_>,
 ) -> Result<(), Error> {
-    if def.allow_hyphen_values {
+    if flag.allows_hyphen_values() {
         return Ok(());
     }
     let Some(value) = value.filter(|value| value.starts_with('-') && value.len() > 1) else {
@@ -126,7 +147,7 @@ fn reject_option_value<S: Storage, P: Storage>(
     }
 }
 
-fn is_declared_option<S: Storage, P: Storage>(value: &str, config: &ScanConfig<'_, S, P>) -> bool {
+fn is_declared_option(value: &str, config: &ScanConfig<'_>) -> bool {
     if value == "--" {
         return true;
     }
@@ -141,10 +162,7 @@ fn is_declared_option<S: Storage, P: Storage>(value: &str, config: &ScanConfig<'
 }
 
 /// An argument that opens like an option, so a value taken from it would swallow a flag
-pub fn is_option_boundary<S: Storage, P: Storage>(
-    value: &str,
-    config: &ScanConfig<'_, S, P>,
-) -> bool {
+pub fn is_option_boundary(value: &str, config: &ScanConfig<'_>) -> bool {
     (value.starts_with('-') && value.len() > 1)
         || value
             .strip_prefix('+')

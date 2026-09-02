@@ -1,48 +1,40 @@
 //! The util-linux help dialect
 
-use ecmd::meta::CommandDef;
-use ecmd::parse::{FlagDef, FlagKind};
-use ecmd::style::{HelpStyle, Style};
+use ecmd::{Def, DefBuilder, Flag, HelpStyle, Positional, Style};
 
-static UTIL_LINUX_FLAGS: [FlagDef; 3] = [
-    FlagDef {
-        ch: 's',
-        long: "single-shot",
-        desc: "return one PID only",
-        implemented: true,
-        ..FlagDef::EMPTY
-    },
-    FlagDef {
-        ch: 'o',
-        long: "omit-pid",
-        kind: FlagKind::Value,
-        value_name: "PID,...",
-        desc: "omit processes with PID",
-        implemented: true,
-        ..FlagDef::EMPTY
-    },
-    FlagDef {
-        ch: '\u{e000}',
-        long: "wide",
-        desc: "wide output",
-        implemented: true,
-        ..FlagDef::EMPTY
-    },
-];
+fn util_linux_flags() -> Vec<Flag> {
+    vec![
+        Flag::new('s')
+            .long("single-shot")
+            .desc("return one PID only")
+            .once()
+            .reject_hyphen_values(),
+        Flag::new('o')
+            .long("omit-pid")
+            .value("PID,...")
+            .desc("omit processes with PID")
+            .once()
+            .reject_hyphen_values(),
+        Flag::long_only("wide")
+            .desc("wide output")
+            .once()
+            .reject_hyphen_values(),
+    ]
+}
 
-fn util_linux_def(tags: &'static [(&'static str, &'static str)]) -> CommandDef {
-    CommandDef {
-        name: "pidof",
-        about: "Find the process ID of a running program",
-        short_doc: "pidof [options] [program [...]]",
-        style: Style::Gnu,
-        help_style: HelpStyle::UtilLinux,
-        permute: true,
-        flags: &UTIL_LINUX_FLAGS,
-        has_rest: true,
-        tags,
-        ..CommandDef::EMPTY
-    }
+fn util_linux_def(tags: &'static [(&'static str, &'static str)]) -> Def {
+    util_linux_builder(tags).build()
+}
+
+fn util_linux_builder(tags: &'static [(&'static str, &'static str)]) -> DefBuilder {
+    Def::builder("pidof")
+        .about("Find the process ID of a running program")
+        .short_doc("pidof [options] [program [...]]")
+        .style(Style::Gnu)
+        .help_style(HelpStyle::UtilLinux)
+        .flags(util_linux_flags())
+        .rest(Positional::new("args").spread())
+        .tags(tags.iter().copied())
 }
 
 #[test]
@@ -77,9 +69,9 @@ fn util_linux_help_hangs_a_literal_row_whose_description_opens_blank() {
 
 #[test]
 fn util_linux_help_separates_rows_and_appends_extra_blocks() {
-    static EXTRA: [&str; 1] = ["Arguments:\n Values for <length> may carry a suffix."];
-    let mut def = util_linux_def(&[("help_row", "1\t\t")]);
-    def.extra = &EXTRA;
+    let def = util_linux_builder(&[("help_row", "1\t\t")])
+        .extra(["Arguments:\n Values for <length> may carry a suffix."])
+        .build();
     let help = def.help();
     assert!(help.contains("return one PID only\n\n -o, --omit-pid"));
     assert!(

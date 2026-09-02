@@ -1,11 +1,11 @@
 //! What one scan has accumulated so far
 
+use crate::def::{Flag, FlagKind};
 use crate::error::Error;
-use crate::meta::Storage;
 use crate::style::Style;
 
 use super::config::ScanConfig;
-use super::{FlagDef, FlagKind, OnUnknown, Parsed, Scan, Spelling};
+use super::{Parsed, Scan, Spelling};
 
 /// The scan under construction plus the bookkeeping repeats and conflicts need
 pub struct State<'a> {
@@ -24,50 +24,50 @@ impl<'a> State<'a> {
     }
 
     /// Record one flag occurrence, refusing a repeat or a conflict the style forbids
-    pub fn record<S: Storage, P: Storage>(
+    pub fn record(
         &mut self,
-        config: &ScanConfig<'a, S, P>,
+        config: &ScanConfig<'a>,
         position: usize,
-        def: &FlagDef<S>,
+        flag: &Flag,
         parsed: Parsed<'a>,
         spelling: Spelling<'a>,
     ) -> Result<(), Error> {
-        self.reject_repeat(config.style, position, def, spelling)?;
-        self.reject_conflict(config, position, def, spelling)?;
-        if !def.implemented {
+        self.reject_repeat(config.style, position, flag, spelling)?;
+        self.reject_conflict(config, position, flag, spelling)?;
+        if !flag.is_implemented() {
             self.scan.unimplemented.push(spelling);
         }
-        if def.kind != FlagKind::Noop {
+        if flag.flag_kind() != FlagKind::Noop {
             self.scan.flags.push(parsed);
         }
         Ok(())
     }
 
-    fn reject_repeat<S: Storage>(
+    fn reject_repeat(
         &mut self,
         style: Style,
         position: usize,
-        def: &FlagDef<S>,
+        flag: &Flag,
         spelling: Spelling<'a>,
     ) -> Result<(), Error> {
         let Some(seen) = self.seen.get_mut(position) else {
             return Ok(());
         };
-        if style == Style::Gnu && !def.repeatable && *seen {
+        if style == Style::Gnu && !flag.is_repeatable() && *seen {
             return Err(Error::RepeatedFlag(spelling.to_string()));
         }
         *seen = true;
         Ok(())
     }
 
-    fn reject_conflict<S: Storage, P: Storage>(
+    fn reject_conflict(
         &mut self,
-        config: &ScanConfig<'a, S, P>,
+        config: &ScanConfig<'a>,
         position: usize,
-        def: &FlagDef<S>,
+        flag: &Flag,
         spelling: Spelling<'a>,
     ) -> Result<(), Error> {
-        let Some(group) = config.policy.exclusive_group(def.ch) else {
+        let Some(group) = config.policy.exclusive_group(flag.id()) else {
             return Ok(());
         };
         match self.exclusive {
@@ -99,14 +99,9 @@ impl<'a> State<'a> {
         self.scan.operands.len()
     }
 
-    /// Keep an unknown long option as an operand when the command passes unknowns through
-    pub fn pass_unknown(
-        &mut self,
-        error: Error,
-        arg: &'a str,
-        on_unknown: OnUnknown,
-    ) -> Result<(), Error> {
-        if on_unknown == OnUnknown::PassThrough && matches!(error, Error::UnknownFlag(_)) {
+    /// Keep an unknown long option as an operand when the command is lenient
+    pub fn pass_unknown(&mut self, error: Error, arg: &'a str, lenient: bool) -> Result<(), Error> {
+        if lenient && matches!(error, Error::UnknownFlag(_)) {
             self.push_operand(arg);
             Ok(())
         } else {

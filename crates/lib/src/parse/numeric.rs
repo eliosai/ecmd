@@ -1,7 +1,6 @@
 //! Obsolete numeric options such as `-5` and `+3:7`
 
 use crate::error::Error;
-use crate::meta::Storage;
 
 use super::config::ScanConfig;
 use super::cursor::Cursor;
@@ -9,10 +8,10 @@ use super::state::State;
 use super::{Parsed, Spelling};
 
 /// A leading `-N` routed to the first-numeric flag, an operand when it is no count
-pub fn process_first_numeric<'a, S: Storage, P: Storage>(
+pub fn process_first_numeric<'a>(
     arg: &'a str,
     cursor: &mut Cursor<'a>,
-    config: &ScanConfig<'a, S, P>,
+    config: &ScanConfig<'a>,
     state: &mut State<'a>,
 ) -> Result<bool, Error> {
     let Some(ch) = config.policy.first_numeric_value else {
@@ -21,7 +20,7 @@ pub fn process_first_numeric<'a, S: Storage, P: Storage>(
     let Some(value) = first_numeric_value(arg) else {
         return Ok(false);
     };
-    let Some((position, def)) = config.find(ch) else {
+    let Some((position, flag)) = config.find(ch) else {
         return Ok(false);
     };
     if first_numeric_is_operand(value) {
@@ -30,13 +29,13 @@ pub fn process_first_numeric<'a, S: Storage, P: Storage>(
         return Err(Error::FirstNumericValue {
             option: value.chars().next().unwrap_or_default(),
             flag: ch,
-            value_name: def.value_name.as_ref().to_owned(),
+            value_name: flag.value_name().unwrap_or("").to_owned(),
         });
     } else {
         state.record(
             config,
             position,
-            def,
+            flag,
             Parsed::Value(ch, value),
             Spelling::Arg(arg),
         )?;
@@ -56,10 +55,10 @@ fn first_numeric_is_operand(value: &str) -> bool {
 }
 
 /// A `+N` or `-N:M` operand routed to its valued flag, the first occurrence winning
-pub fn process_numeric_operand<'a, S: Storage, P: Storage>(
+pub fn process_numeric_operand<'a>(
     arg: &'a str,
     cursor: &mut Cursor<'a>,
-    config: &ScanConfig<'a, S, P>,
+    config: &ScanConfig<'a>,
     state: &mut State<'a>,
 ) -> Result<bool, Error> {
     let Some((rule, value)) = config.policy.numeric_operands.iter().find_map(|rule| {
@@ -69,7 +68,7 @@ pub fn process_numeric_operand<'a, S: Storage, P: Storage>(
     }) else {
         return Ok(false);
     };
-    let Some((position, def)) = config.find(rule.ch) else {
+    let Some((position, flag)) = config.find(rule.ch) else {
         return Ok(false);
     };
     cursor.advance();
@@ -79,7 +78,7 @@ pub fn process_numeric_operand<'a, S: Storage, P: Storage>(
     state.record(
         config,
         position,
-        def,
+        flag,
         Parsed::Value(rule.ch, value),
         Spelling::Arg(arg),
     )?;
