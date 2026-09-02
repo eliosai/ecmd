@@ -48,9 +48,9 @@ docs-open:
 msrv:
     cargo +1.88 check --workspace --all-features --locked
 
-# Compare the public API against the last published release
+# Compare the public API against the last release, or against the given revision
 semver-check baseline="":
-    cargo semver-checks --workspace --all-features {{ if baseline != "" { "--baseline-rev " + baseline } else { "" } }}
+    bash scripts/semver-check.sh {{baseline}}
 
 # Build the crates.io packages and list what ships in each
 package-check:
