@@ -1,294 +1,95 @@
-//! Flag definitions the scan tests share
+//! Definitions the scan and help tests share
 
 #![expect(dead_code, reason = "each test binary uses its own subset")]
 
-use ecmd::meta::CommandDef;
-use ecmd::parse::{FlagDef, FlagKind, OnUnknown};
-use ecmd::style::{HelpStyle, Style};
+use ecmd::{Def, Flag, FlagKind, Style};
 
-pub const fn bool_flag(ch: char) -> FlagDef {
-    FlagDef {
-        ch,
-        kind: FlagKind::Bool,
-        long: "",
-        aliases: &[],
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
+pub const fn bool_flag(ch: char) -> Flag {
+    Flag::new(ch).once()
 }
 
-pub const fn value_flag(ch: char) -> FlagDef {
-    FlagDef {
-        ch,
-        kind: FlagKind::Value,
-        long: "",
-        aliases: &[],
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
+pub const fn value_flag(ch: char) -> Flag {
+    Flag::new(ch).kind(FlagKind::Value).once()
 }
 
-pub const fn polar_flag(ch: char) -> FlagDef {
-    FlagDef {
-        ch,
-        kind: FlagKind::Polar,
-        long: "",
-        aliases: &[],
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
+pub const fn polar_flag(ch: char) -> Flag {
+    Flag::new(ch).kind(FlagKind::Polar).once()
 }
 
-pub const fn noop_flag(ch: char) -> FlagDef {
-    FlagDef {
-        ch,
-        kind: FlagKind::Noop,
-        long: "",
-        aliases: &[],
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
+pub const fn noop_flag(ch: char) -> Flag {
+    Flag::new(ch).kind(FlagKind::Noop).once()
 }
 
-pub const fn long_bool(ch: char, long: &'static str) -> FlagDef {
-    FlagDef {
-        ch,
-        long,
-        aliases: &[],
-        kind: FlagKind::Bool,
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
+pub fn long_bool(ch: char, long: &'static str) -> Flag {
+    Flag::new(ch).long(long).once()
 }
 
-pub const fn long_value(ch: char, long: &'static str) -> FlagDef {
-    FlagDef {
-        ch,
-        long,
-        aliases: &[],
-        kind: FlagKind::Value,
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
+pub fn long_value(ch: char, long: &'static str) -> Flag {
+    Flag::new(ch).long(long).kind(FlagKind::Value).once()
 }
 
-pub const fn aliased_bool(
-    ch: char,
-    long: &'static str,
-    aliases: &'static [&'static str],
-) -> FlagDef {
-    FlagDef {
-        ch,
-        long,
-        aliases,
-        kind: FlagKind::Bool,
-        clears: &[],
-        desc: "",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    }
+pub fn aliased_bool(ch: char, long: &'static str, aliases: &'static [&'static str]) -> Flag {
+    aliases
+        .iter()
+        .fold(long_bool(ch, long), |flag, alias| flag.alias(*alias))
 }
 
-pub const fn make_def(
+/// A definition over these flags with the given leniency, style and permutation
+pub fn scanner(flags: &[Flag], lenient: bool, style: Style, permute: bool) -> Def {
+    let builder = Def::builder("test").style(style).permute(permute);
+    let builder = if lenient { builder.lenient() } else { builder };
+    builder.flags(flags.iter().cloned()).build()
+}
+
+/// A bash builtin definition in the shape the `help` tests describe
+pub fn make_def(
     name: &'static str,
     about: &'static str,
     short_doc: &'static str,
-    flags: &'static [FlagDef],
-    description: &'static [&'static str],
-    extra: &'static [&'static str],
-    exit_status: &'static [&'static str],
-) -> CommandDef {
-    CommandDef {
-        name,
-        about,
-        short_doc,
-        style: Style::Posix,
-        help_style: HelpStyle::from_parse_style(Style::Posix),
-        on_unknown: OnUnknown::Reject,
-        permute: false,
-        flags,
-        positionals: &[],
-        has_rest: false,
-        rest_label: "",
-        rest_hidden: false,
-        rest_desc: "",
-        rest_default: "",
-        rest_required: false,
-        value_rules: &[],
-        numeric_operands: &[],
-        first_numeric_value: None,
-        exact_long: false,
-        no_implicit_version: false,
-        equals_only: &[],
-        attached_values: &[],
-        separated_values: &[],
-        prefixed_values: &[],
-        exclusive_groups: &[],
-        tags: &[],
-        description,
-        extra,
-        exit_status,
-    }
+    flags: &[Flag],
+    description: &[&'static str],
+    extra: &[&'static str],
+    exit_status: &[&'static str],
+) -> Def {
+    Def::builder(name)
+        .about(about)
+        .short_doc(short_doc)
+        .permute(false)
+        .flags(flags.iter().cloned())
+        .description(description.iter().copied())
+        .extra(extra.iter().copied())
+        .exit_status(exit_status.iter().copied())
+        .build()
 }
 
-// ── Test against real `bash -c 'help alias'` output ────────
-pub static ALIAS_FLAGS: [FlagDef; 1] = [FlagDef {
-    ch: 'p',
-    long: "",
-    aliases: &[],
-    kind: FlagKind::Bool,
-    clears: &[],
-    desc: "print all defined aliases in a reusable format",
-    value_name: "",
-    hidden: false,
-    implemented: true,
-    repeatable: false,
-    allow_hyphen_values: true,
-    possible_values: &[],
-    help_values: &[],
-    default_value: "",
-    help_label: "",
-    visible_aliases: &[],
-}];
+pub fn alias_flags() -> Vec<Flag> {
+    vec![
+        Flag::new('p')
+            .desc("print all defined aliases in a reusable format")
+            .once(),
+    ]
+}
 
-// ── GNU help formatting (Style::Gnu) ───────────────────────
-pub static GNU_FLAGS: [FlagDef; 2] = [
-    FlagDef {
-        ch: 'a',
-        long: "multiple",
-        aliases: &[],
-        kind: FlagKind::Bool,
-        clears: &[],
-        desc: "support multiple arguments and treat each as a NAME",
-        value_name: "",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    },
-    FlagDef {
-        ch: 's',
-        long: "suffix",
-        aliases: &[],
-        kind: FlagKind::Value,
-        clears: &[],
-        desc: "remove a trailing SUFFIX; implies -a",
-        value_name: "SUFFIX",
-        hidden: false,
-        implemented: true,
-        repeatable: false,
-        allow_hyphen_values: true,
-        possible_values: &[],
-        help_values: &[],
-        default_value: "",
-        help_label: "",
-        visible_aliases: &[],
-    },
-];
+pub fn gnu_flags() -> Vec<Flag> {
+    vec![
+        Flag::new('a')
+            .long("multiple")
+            .desc("support multiple arguments and treat each as a NAME")
+            .once(),
+        Flag::new('s')
+            .long("suffix")
+            .value("SUFFIX")
+            .desc("remove a trailing SUFFIX; implies -a")
+            .once(),
+    ]
+}
 
-pub const fn gnu_definition(flags: &'static [FlagDef]) -> CommandDef {
-    CommandDef {
-        name: "sample",
-        about: "sample",
-        short_doc: "sample [OPTION]...",
-        style: Style::Gnu,
-        help_style: HelpStyle::from_parse_style(Style::Gnu),
-        on_unknown: OnUnknown::Reject,
-        permute: true,
-        flags,
-        positionals: &[],
-        has_rest: false,
-        rest_label: "",
-        rest_hidden: false,
-        rest_desc: "",
-        rest_default: "",
-        rest_required: false,
-        value_rules: &[],
-        numeric_operands: &[],
-        first_numeric_value: None,
-        exact_long: false,
-        no_implicit_version: false,
-        equals_only: &[],
-        attached_values: &[],
-        separated_values: &[],
-        prefixed_values: &[],
-        exclusive_groups: &[],
-        tags: &[],
-        description: &[],
-        extra: &[],
-        exit_status: &[],
-    }
+/// A GNU definition over these flags
+pub fn gnu_definition(flags: &[Flag]) -> Def {
+    Def::builder("sample")
+        .about("sample")
+        .short_doc("sample [OPTION]...")
+        .style(Style::Gnu)
+        .flags(flags.iter().cloned())
+        .build()
 }

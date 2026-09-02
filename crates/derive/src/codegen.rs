@@ -37,13 +37,12 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let parse_body = gen_parse(&fields);
 
     Ok(quote! {
-        impl ::ecmd::meta::Command for #name {
-            fn def() -> &'static ::ecmd::meta::CommandDef {
-                static DEF: ::ecmd::meta::CommandDef = #meta_body;
-                &DEF
+        impl ::ecmd::Command for #name {
+            fn def() -> &'static ::ecmd::Def {
+                #meta_body
             }
 
-            fn parse(args: &[&str]) -> ::core::result::Result<Self, ::ecmd::error::Error> {
+            fn parse(args: &[&str]) -> ::core::result::Result<Self, ::ecmd::Error> {
                 #parse_body
             }
         }
@@ -185,7 +184,7 @@ fn gen_parse(fields: &[ClassifiedField<'_>]) -> TokenStream {
     quote! {
         let scan = Self::def().scan(args)?;
         if let Some(name) = scan.unimplemented().first() {
-            return Err(::ecmd::error::Error::UnimplementedFlag(name.to_string()));
+            return Err(::ecmd::Error::UnimplementedFlag(name.to_string()));
         }
 
         #inits
@@ -211,7 +210,7 @@ fn gen_inits(fields: &[ClassifiedField<'_>]) -> TokenStream {
             match &cf.role {
                 FieldRole::BoolFlag(_) => quote! { let mut #id = false; },
                 FieldRole::PolarityFlag(_) => {
-                    quote! { let mut #id = ::ecmd::polarity::Polarity::Unset; }
+                    quote! { let mut #id = ::ecmd::Polarity::Unset; }
                 }
                 FieldRole::ValuedFlag(_) | FieldRole::OptionalPositional => {
                     quote! { let mut #id = None; }
@@ -243,31 +242,31 @@ fn gen_single_dispatch(
         FieldRole::BoolFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
-            Some(quote! { ::ecmd::parse::Parsed::Bool(#ch) => { #id = true; #resets } })
+            Some(quote! { ::ecmd::Parsed::Bool(#ch) => { #id = true; #resets } })
         }
         FieldRole::PolarityFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
-            Some(quote! { ::ecmd::parse::Parsed::Polar(#ch, p) => { #id = *p; #resets } })
+            Some(quote! { ::ecmd::Parsed::Polar(#ch, p) => { #id = *p; #resets } })
         }
         FieldRole::ValuedFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let assign = gen_value_assign(id, cf.field, ch);
-            Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #assign #resets } })
+            Some(quote! { ::ecmd::Parsed::Value(#ch, v) => { #assign #resets } })
         }
         FieldRole::RepeatableValueFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             let push = gen_repeatable_push(id, cf.field, ch);
-            Some(quote! { ::ecmd::parse::Parsed::Value(#ch, v) => { #push #resets } })
+            Some(quote! { ::ecmd::Parsed::Value(#ch, v) => { #push #resets } })
         }
         FieldRole::PolarValueFlag(attrs) => {
             let ch = cf.id;
             let resets = gen_clears_resets(&attrs.clears, all);
             Some(quote! {
-                ::ecmd::parse::Parsed::PolarValue(#ch, p, v) => {
-                    #id.push(::ecmd::polarity::PolarVal::new(*p, (*v).to_owned()));
+                ::ecmd::Parsed::PolarValue(#ch, p, v) => {
+                    #id.push(::ecmd::PolarVal::new(*p, (*v).to_owned()));
                     #resets
                 }
             })
@@ -284,7 +283,7 @@ fn gen_clears_resets(targets: &[Ident], all: &[ClassifiedField<'_>]) -> TokenStr
             let id = cf.ident;
             let reset = match &cf.role {
                 FieldRole::BoolFlag(_) => quote! { #id = false; },
-                FieldRole::PolarityFlag(_) => quote! { #id = ::ecmd::polarity::Polarity::Unset; },
+                FieldRole::PolarityFlag(_) => quote! { #id = ::ecmd::Polarity::Unset; },
                 FieldRole::ValuedFlag(_) => quote! { #id = None; },
                 FieldRole::RepeatableValueFlag(_) | FieldRole::PolarValueFlag(_) => {
                     quote! { #id = Vec::new(); }
@@ -319,7 +318,7 @@ fn gen_positionals(fields: &[ClassifiedField<'_>]) -> TokenStream {
             }
             FieldRole::Rest => {
                 stmts.push(quote! {
-                    #id = ::ecmd::operands::Operands::from_args(
+                    #id = ::ecmd::Operands::from_args(
                         scan.operands().get(#idx..).unwrap_or_default()
                     );
                 });
@@ -357,7 +356,7 @@ fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenStream
         let mut __missing_required: ::std::vec::Vec<::std::string::String> = ::std::vec::Vec::new();
         #(#checks)*
         if !__missing_required.is_empty() {
-            return Err(::ecmd::error::Error::MissingRequired(__missing_required));
+            return Err(::ecmd::Error::MissingRequired(__missing_required));
         }
     }
 }
@@ -370,19 +369,7 @@ struct ValuePolicyLiteral {
     default: String,
 }
 
-struct PolicyTokens {
-    values: TokenStream,
-    numeric_operands: TokenStream,
-    first_numeric: TokenStream,
-    exact_long: bool,
-    equals_only: TokenStream,
-    attached_values: TokenStream,
-    separated_values: TokenStream,
-    prefixed_values: TokenStream,
-    exclusive_groups: TokenStream,
-}
-
-fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result<PolicyTokens> {
+fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result<TokenStream> {
     let mut values = Vec::new();
     let mut numeric_operands = Vec::new();
     let mut first_numeric = None;
@@ -395,17 +382,19 @@ fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result
     let exact_long = cmd.tags.iter().any(|(key, _)| key == "exact_long");
     for (key, value) in &cmd.tags {
         let mode = match key.as_str() {
-            "optional_values" => Some(quote! { ::ecmd::policy::ValueMode::AttachedOrDefault }),
-            "optional_next_values" => Some(quote! { ::ecmd::policy::ValueMode::NextOrDefault }),
+            "optional_values" => Some(quote! { ::ecmd::__private::ValueMode::AttachedOrDefault }),
+            "optional_next_values" => Some(quote! { ::ecmd::__private::ValueMode::NextOrDefault }),
             "numeric_next_values" => {
-                Some(quote! { ::ecmd::policy::ValueMode::NumericNextOrDefault })
+                Some(quote! { ::ecmd::__private::ValueMode::NumericNextOrDefault })
             }
             "optional_numeric_next_values" => {
-                Some(quote! { ::ecmd::policy::ValueMode::OptionalNumericNextOrDefault })
+                Some(quote! { ::ecmd::__private::ValueMode::OptionalNumericNextOrDefault })
             }
-            "exact_short_defaults" => Some(quote! { ::ecmd::policy::ValueMode::ExactShortDefault }),
+            "exact_short_defaults" => {
+                Some(quote! { ::ecmd::__private::ValueMode::ExactShortDefault })
+            }
             "optional_any_next_values" => {
-                Some(quote! { ::ecmd::policy::ValueMode::AnyNextOrDefault })
+                Some(quote! { ::ecmd::__private::ValueMode::AnyNextOrDefault })
             }
             _ => None,
         };
@@ -429,6 +418,7 @@ fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result
     }
     Ok(policy_literal(&PolicySpec {
         values: &values,
+        no_implicit_version: cmd.no_implicit_version,
         numeric_operands: &numeric_operands,
         first_numeric,
         exact_long,
@@ -592,6 +582,7 @@ fn policy_long(field: &ClassifiedField<'_>, name: &str) -> bool {
 
 struct PolicySpec<'a> {
     values: &'a [ValuePolicyLiteral],
+    no_implicit_version: bool,
     numeric_operands: &'a [(char, char)],
     first_numeric: Option<char>,
     exact_long: bool,
@@ -602,32 +593,48 @@ struct PolicySpec<'a> {
     exclusive_groups: &'a [(char, u16)],
 }
 
-fn policy_literal(spec: &PolicySpec<'_>) -> PolicyTokens {
+/// The `POLICY` static and the rule arrays it borrows
+fn policy_literal(spec: &PolicySpec<'_>) -> TokenStream {
     let value_rules = spec.values.iter().map(|rule| {
         let ch = rule.ch;
         let mode = &rule.mode;
         let default = &rule.default;
-        quote! { ::ecmd::policy::ValueRule { ch: #ch, mode: #mode, default: #default } }
+        quote! { ::ecmd::__private::ValueRule { ch: #ch, mode: #mode, default: ::std::borrow::Cow::Borrowed(#default) } }
     });
+    let value_count = spec.values.len();
     let numeric_rules = spec.numeric_operands.iter().map(|(ch, prefix)| {
-        quote! { ::ecmd::policy::NumericOperandRule { ch: #ch, prefix: #prefix } }
+        quote! { ::ecmd::__private::NumericRule { ch: #ch, prefix: #prefix } }
     });
+    let numeric_count = spec.numeric_operands.len();
     let first = spec
         .first_numeric
         .map_or_else(|| quote! { None }, |ch| quote! { Some(#ch) });
     let exclusive_rules = spec.exclusive_groups.iter().map(|(ch, group)| {
-        quote! { ::ecmd::policy::ExclusiveRule { ch: #ch, group: #group } }
+        quote! { ::ecmd::__private::ExclusiveRule { ch: #ch, group: #group } }
     });
-    PolicyTokens {
-        values: quote! { &[#(#value_rules),*] },
-        numeric_operands: quote! { &[#(#numeric_rules),*] },
-        first_numeric: first,
-        exact_long: spec.exact_long,
-        equals_only: identities_literal(spec.equals_only),
-        attached_values: identities_literal(spec.attached_values),
-        separated_values: identities_literal(spec.separated_values),
-        prefixed_values: identities_literal(spec.prefixed_values),
-        exclusive_groups: quote! { &[#(#exclusive_rules),*] },
+    let exclusive_count = spec.exclusive_groups.len();
+    let exact_long = spec.exact_long;
+    let no_implicit_version = spec.no_implicit_version;
+    let equals_only = identities_literal(spec.equals_only);
+    let attached_values = identities_literal(spec.attached_values);
+    let separated_values = identities_literal(spec.separated_values);
+    let prefixed_values = identities_literal(spec.prefixed_values);
+    quote! {
+        static VALUE_RULES: [::ecmd::__private::ValueRule; #value_count] = [#(#value_rules),*];
+        static NUMERIC_RULES: [::ecmd::__private::NumericRule; #numeric_count] = [#(#numeric_rules),*];
+        static EXCLUSIVE_RULES: [::ecmd::__private::ExclusiveRule; #exclusive_count] = [#(#exclusive_rules),*];
+        static POLICY: ::ecmd::__private::Policy = ::ecmd::__private::Policy {
+            value_rules: ::std::borrow::Cow::Borrowed(&VALUE_RULES),
+            numeric_operands: ::std::borrow::Cow::Borrowed(&NUMERIC_RULES),
+            first_numeric_value: #first,
+            exact_long: #exact_long,
+            no_implicit_version: #no_implicit_version,
+            equals_only: ::std::borrow::Cow::Borrowed(#equals_only),
+            attached_values: ::std::borrow::Cow::Borrowed(#attached_values),
+            separated_values: ::std::borrow::Cow::Borrowed(#separated_values),
+            prefixed_values: ::std::borrow::Cow::Borrowed(#prefixed_values),
+            exclusive_groups: ::std::borrow::Cow::Borrowed(&EXCLUSIVE_RULES),
+        };
     }
 }
 
@@ -637,177 +644,209 @@ fn identities_literal(identities: &[char]) -> TokenStream {
 
 // ── Meta codegen ────────────────────────────────────────────────
 
+/// The statics one definition is built from, ending in a borrow of the definition itself
 fn gen_meta(
     cmd: &CommandAttrs,
     sections: &crate::attrs::DocSections,
     fields: &[ClassifiedField<'_>],
-    policy: &PolicyTokens,
+    policy: &TokenStream,
 ) -> TokenStream {
     let name = &cmd.name;
     let about = &sections.about;
     let short_doc = &cmd.short_doc;
     let style = style_tokens(cmd);
     let help_style = help_style_tokens(cmd);
-    let on_unknown = if cmd.lenient {
-        quote! { ::ecmd::parse::OnUnknown::PassThrough }
-    } else {
-        quote! { ::ecmd::parse::OnUnknown::Reject }
-    };
+    let lenient = cmd.lenient;
     let permute = !cmd.no_permute;
-    let no_implicit_version = cmd.no_implicit_version;
-    let flag_metas = gen_flag_metas(cmd, fields);
-    let pos_metas = gen_positional_metas(fields);
-    let has_rest = fields.iter().any(|cf| matches!(cf.role, FieldRole::Rest));
-    let rest = fields
-        .iter()
-        .find(|cf| matches!(cf.role, FieldRole::Rest))
-        .map(|cf| {
-            (
-                cf.operand.label.clone(),
-                cf.operand.hidden,
-                cf.ident.to_string(),
-                cf.desc.clone(),
-                cf.operand.default_value.clone(),
-                cf.operand.required,
-            )
-        });
-    let rest_label = rest
-        .as_ref()
-        .map(|(label, _, name, ..)| {
-            if label.is_empty() {
-                name.clone()
-            } else {
-                label.clone()
-            }
-        })
-        .unwrap_or_default();
-    let rest_hidden = rest.as_ref().is_some_and(|(_, hidden, ..)| *hidden);
-    let rest_desc = rest
-        .as_ref()
-        .map(|(_, _, _, desc, ..)| desc.clone())
-        .unwrap_or_default();
-    let rest_default = rest
-        .as_ref()
-        .map(|(_, _, _, _, default, _)| default.clone())
-        .unwrap_or_default();
-    let rest_required = rest.as_ref().is_some_and(|(.., required)| *required);
-    let value_rules = &policy.values;
-    let numeric_operands = &policy.numeric_operands;
-    let first_numeric = &policy.first_numeric;
-    let exact_long = policy.exact_long;
-    let equals_only = &policy.equals_only;
-    let attached_values = &policy.attached_values;
-    let separated_values = &policy.separated_values;
-    let prefixed_values = &policy.prefixed_values;
-    let exclusive_groups = &policy.exclusive_groups;
-    let tag_keys: Vec<&str> = cmd.tags.iter().map(|(k, _)| k.as_str()).collect();
-    let tag_vals: Vec<&str> = cmd.tags.iter().map(|(_, v)| v.as_str()).collect();
-
-    let desc_lines: &Vec<String> = &sections.description;
+    let flags = gen_flag_metas(cmd, fields);
+    let positionals = gen_positional_metas(fields);
+    let (rest_static, rest) = gen_rest(fields);
+    let tags = gen_tags(cmd);
     let extra_lines: &Vec<String> = if cmd.extra_help.is_empty() {
         &sections.extra
     } else {
         &cmd.extra_help
     };
-    let exit_lines: &Vec<String> = &sections.exit_status;
-
+    let description = texts_static(&quote! { DESCRIPTION }, &sections.description);
+    let extra = texts_static(&quote! { EXTRA }, extra_lines);
+    let exit_status = texts_static(&quote! { EXIT_STATUS }, &sections.exit_status);
     quote! {
-        ::ecmd::meta::CommandDef {
+        #flags
+        #positionals
+        #rest_static
+        #policy
+        #tags
+        #description
+        #extra
+        #exit_status
+        static DEF: ::ecmd::Def = ::ecmd::Def::from_raw(::ecmd::__private::RawDef {
             name: #name,
             about: #about,
             short_doc: #short_doc,
             style: #style,
             help_style: #help_style,
-            on_unknown: #on_unknown,
+            lenient: #lenient,
             permute: #permute,
-            flags: &[#flag_metas],
-            positionals: &[#pos_metas],
-            has_rest: #has_rest,
-            rest_label: #rest_label,
-            rest_hidden: #rest_hidden,
-            rest_desc: #rest_desc,
-            rest_default: #rest_default,
-            rest_required: #rest_required,
-            value_rules: #value_rules,
-            numeric_operands: #numeric_operands,
-            first_numeric_value: #first_numeric,
-            exact_long: #exact_long,
-            no_implicit_version: #no_implicit_version,
-            equals_only: #equals_only,
-            attached_values: #attached_values,
-            separated_values: #separated_values,
-            prefixed_values: #prefixed_values,
-            exclusive_groups: #exclusive_groups,
-            tags: &[#( (#tag_keys, #tag_vals) ),*],
-            description: &[#( #desc_lines ),*],
-            extra: &[#( #extra_lines ),*],
-            exit_status: &[#( #exit_lines ),*],
-        }
+            flags: &FLAGS,
+            positionals: &POSITIONALS,
+            rest: #rest,
+            policy: &POLICY,
+            tags: &TAGS,
+            description: &DESCRIPTION,
+            extra: &EXTRA,
+            exit_status: &EXIT_STATUS,
+        });
+        &DEF
     }
 }
 
+/// A static array of borrowed text lines under `name`
+fn texts_static(name: &TokenStream, lines: &[String]) -> TokenStream {
+    let count = lines.len();
+    quote! {
+        static #name: [::std::borrow::Cow<'static, str>; #count] =
+            [#(::std::borrow::Cow::Borrowed(#lines)),*];
+    }
+}
+
+/// A static text array for a flag list, or a bare empty slice when there is nothing to hold
+fn texts_ref(name: &str, lines: &[String]) -> (TokenStream, TokenStream) {
+    if lines.is_empty() {
+        return (TokenStream::new(), quote! { &[] });
+    }
+    let ident = Ident::new(name, Span::call_site());
+    (texts_static(&quote! { #ident }, lines), quote! { &#ident })
+}
+
+fn gen_tags(cmd: &CommandAttrs) -> TokenStream {
+    let count = cmd.tags.len();
+    let keys = cmd.tags.iter().map(|(key, _)| key);
+    let values = cmd.tags.iter().map(|(_, value)| value);
+    quote! {
+        static TAGS: [::ecmd::__private::Tag; #count] =
+            [#(::ecmd::__private::Tag::new_static(#keys, #values)),*];
+    }
+}
+
+/// The rest slot as a static, and the borrow the definition takes of it
+fn gen_rest(fields: &[ClassifiedField<'_>]) -> (TokenStream, TokenStream) {
+    let Some(cf) = fields.iter().find(|cf| matches!(cf.role, FieldRole::Rest)) else {
+        return (TokenStream::new(), quote! { None });
+    };
+    let name = cf.ident.to_string();
+    let desc = &cf.desc;
+    let label = &cf.operand.label;
+    let default_value = &cf.operand.default_value;
+    let hidden = cf.operand.hidden;
+    let required = cf.operand.required;
+    let rest = quote! {
+        static REST: ::ecmd::Positional = ::ecmd::Positional::from_raw(::ecmd::__private::RawPositional {
+            name: #name,
+            required: #required,
+            desc: #desc,
+            label: #label,
+            default_value: #default_value,
+            hidden: #hidden,
+            spread: false,
+        });
+    };
+    (rest, quote! { Some(&REST) })
+}
+
+/// The `FLAGS` static and the text statics its entries borrow
 fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
+    let mut statics = Vec::new();
     let mut defs: Vec<_> = fields
         .iter()
-        .filter_map(|cf| flag_def_literal(cf, fields, cmd))
+        .enumerate()
+        .filter_map(|(index, cf)| flag_def_literal(cf, cmd, index, &mut statics))
         .collect();
     for ch in cmd.noop.chars() {
         defs.push(quote! {
-            ::ecmd::parse::FlagDef {
-                ch: #ch, kind: ::ecmd::parse::FlagKind::Noop,
-                implemented: true, allow_hyphen_values: true,
-                ..::ecmd::parse::FlagDef::EMPTY
-            }
+            ::ecmd::Flag::from_raw(::ecmd::__private::RawFlag {
+                id: #ch,
+                kind: ::ecmd::FlagKind::Noop,
+                ..::ecmd::__private::RawFlag::EMPTY
+            })
         });
     }
-    quote! { #(#defs),* }
+    let count = defs.len();
+    quote! {
+        #(#statics)*
+        static FLAGS: [::ecmd::Flag; #count] = [#(#defs),*];
+    }
 }
 
-/// One `FlagDef { … }` literal for a flag field, shared by parse and meta codegen.
+/// One `Flag::from_raw` literal for a flag field, its text lists pushed as statics
 fn flag_def_literal(
     cf: &ClassifiedField<'_>,
-    fields: &[ClassifiedField<'_>],
     cmd: &CommandAttrs,
+    index: usize,
+    statics: &mut Vec<TokenStream>,
 ) -> Option<TokenStream> {
     let (_, kind) = flag_def_tokens(&cf.role)?;
-    let ch = cf.id;
-    let clears: Vec<char> = resolve_clears(&cf.role, fields);
+    let attrs = flag_attrs(&cf.role);
+    let id = cf.id;
     let desc = &cf.desc;
     let value_name = flag_value_name(&cf.role);
     let long = flag_long(cf, cmd);
-    let aliases = flag_aliases(&cf.role);
-    let hidden = flag_attrs(&cf.role).is_some_and(|a| a.hidden);
-    let implemented = flag_attrs(&cf.role).is_none_or(|a| a.implemented);
-    let repeatable = flag_attrs(&cf.role)
-        .is_some_and(|attrs| attrs.repeat == RepeatAttr::Repeatable)
+    let hidden = attrs.is_some_and(|a| a.hidden);
+    let implemented = attrs.is_none_or(|a| a.implemented);
+    let repeatable = attrs.is_some_and(|attrs| attrs.repeat == RepeatAttr::Repeatable)
         || !cmd.no_override
         || matches!(cf.role, FieldRole::RepeatableValueFlag(_));
-    let allow_hyphen_values = flag_attrs(&cf.role).is_none_or(|attrs| attrs.allow_hyphen_values);
-    let possible_values: Vec<String> = flag_attrs(&cf.role)
-        .map(|attrs| attrs.possible_values.clone())
-        .unwrap_or_default();
-    let help_values: Vec<String> = flag_attrs(&cf.role)
-        .map(|attrs| attrs.help_values.clone())
-        .unwrap_or_default();
-    let default_value = flag_attrs(&cf.role)
+    let allow_hyphen_values = attrs.is_none_or(|attrs| attrs.allow_hyphen_values);
+    let default_value = attrs
         .map(|attrs| attrs.default_value.clone())
         .unwrap_or_default();
-    let help_label = flag_attrs(&cf.role)
+    let help_label = attrs
         .map(|attrs| attrs.help_label.clone())
         .unwrap_or_default();
-    let visible_aliases: Vec<String> = flag_attrs(&cf.role)
-        .map(|attrs| attrs.visible_aliases.clone())
-        .unwrap_or_default();
+    let lists = [
+        (
+            "ALIASES",
+            attrs.map(|a| a.aliases.clone()).unwrap_or_default(),
+        ),
+        (
+            "VALUES",
+            attrs.map(|a| a.possible_values.clone()).unwrap_or_default(),
+        ),
+        (
+            "HELP_VALUES",
+            attrs.map(|a| a.help_values.clone()).unwrap_or_default(),
+        ),
+        (
+            "VISIBLE_ALIASES",
+            attrs.map(|a| a.visible_aliases.clone()).unwrap_or_default(),
+        ),
+    ];
+    let mut refs = Vec::new();
+    for (suffix, lines) in &lists {
+        let (text_static, reference) = texts_ref(&format!("FLAG_{index}_{suffix}"), lines);
+        statics.push(text_static);
+        refs.push(reference);
+    }
+    let [aliases, possible_values, help_values, visible_aliases] =
+        <[TokenStream; 4]>::try_from(refs).ok()?;
     Some(quote! {
-        ::ecmd::parse::FlagDef { ch: #ch, long: #long, aliases: &[#(#aliases),*], kind: #kind, clears: &[#(#clears),*], desc: #desc, value_name: #value_name, hidden: #hidden, implemented: #implemented, repeatable: #repeatable, allow_hyphen_values: #allow_hyphen_values, possible_values: &[#(#possible_values),*], help_values: &[#(#help_values),*], default_value: #default_value, help_label: #help_label, visible_aliases: &[#(#visible_aliases),*] }
+        ::ecmd::Flag::from_raw(::ecmd::__private::RawFlag {
+            id: #id,
+            long: #long,
+            aliases: #aliases,
+            kind: #kind,
+            desc: #desc,
+            value_name: #value_name,
+            hidden: #hidden,
+            implemented: #implemented,
+            repeatable: #repeatable,
+            allow_hyphen_values: #allow_hyphen_values,
+            possible_values: #possible_values,
+            help_values: #help_values,
+            default_value: #default_value,
+            help_label: #help_label,
+            visible_aliases: #visible_aliases,
+        })
     })
-}
-
-/// Alias long names declared via `#[flag(alias = "…")]`.
-fn flag_aliases(role: &FieldRole) -> Vec<String> {
-    flag_attrs(role)
-        .map(|a| a.aliases.clone())
-        .unwrap_or_default()
 }
 
 /// GNU long name for a flag: explicit `long=`, else kebab field name in gnu style, else empty.
@@ -831,23 +870,23 @@ fn kebab(ident: &Ident) -> String {
 /// The parsing style tokens for this command (Gnu when opted in, else Posix).
 fn style_tokens(cmd: &CommandAttrs) -> TokenStream {
     if cmd.style == "gnu" {
-        quote! { ::ecmd::style::Style::Gnu }
+        quote! { ::ecmd::Style::Gnu }
     } else {
-        quote! { ::ecmd::style::Style::Posix }
+        quote! { ::ecmd::Style::Posix }
     }
 }
 
 /// The declared help dialect, defaulting to the one implied by the parse style.
 fn help_style_tokens(cmd: &CommandAttrs) -> TokenStream {
     match cmd.help_style.as_deref() {
-        Some("bash") => quote! { ::ecmd::style::HelpStyle::Bash },
-        Some("gnu") => quote! { ::ecmd::style::HelpStyle::Gnu },
-        Some("clap") => quote! { ::ecmd::style::HelpStyle::Clap },
-        Some("clap_wide") => quote! { ::ecmd::style::HelpStyle::ClapWide },
-        Some("util_linux") => quote! { ::ecmd::style::HelpStyle::UtilLinux },
+        Some("bash") => quote! { ::ecmd::HelpStyle::Bash },
+        Some("gnu") => quote! { ::ecmd::HelpStyle::Gnu },
+        Some("clap") => quote! { ::ecmd::HelpStyle::Clap },
+        Some("clap_wide") => quote! { ::ecmd::HelpStyle::ClapWide },
+        Some("util_linux") => quote! { ::ecmd::HelpStyle::UtilLinux },
         _ => {
             let style = style_tokens(cmd);
-            quote! { ::ecmd::style::HelpStyle::from_parse_style(#style) }
+            quote! { ::ecmd::HelpStyle::from_parse_style(#style) }
         }
     }
 }
@@ -868,11 +907,20 @@ fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
             let hidden = cf.operand.hidden;
             let spread = cf.operand.spread;
             Some(quote! {
-                ::ecmd::meta::PositionalDef { name: #name, required: #required, desc: #desc, label: #label, default_value: #default_value, hidden: #hidden, spread: #spread }
+                ::ecmd::Positional::from_raw(::ecmd::__private::RawPositional {
+                    name: #name,
+                    required: #required,
+                    desc: #desc,
+                    label: #label,
+                    default_value: #default_value,
+                    hidden: #hidden,
+                    spread: #spread,
+                })
             })
         })
         .collect();
-    quote! { #(#defs),* }
+    let count = defs.len();
+    quote! { static POSITIONALS: [::ecmd::Positional; #count] = [#(#defs),*]; }
 }
 
 // ── Value assignment (FromStr) ───────────────────────────────────
@@ -902,7 +950,7 @@ fn gen_repeatable_push(id: &Ident, field: &Field, ch: char) -> TokenStream {
 fn gen_parse_into(target: TokenStream, ch: char) -> TokenStream {
     quote! {
         #target(v.parse().map_err(|e| {
-            ::ecmd::error::Error::InvalidValue {
+            ::ecmd::Error::InvalidValue {
                 flag: format!("-{}", #ch),
                 value: (*v).to_owned(),
                 reason: format!("{e}"),
@@ -948,23 +996,14 @@ fn clears_targets(role: &FieldRole) -> &[Ident] {
 
 fn flag_def_tokens(role: &FieldRole) -> Option<(char, TokenStream)> {
     match role {
-        FieldRole::BoolFlag(a) => Some((a.short, quote! { ::ecmd::parse::FlagKind::Bool })),
-        FieldRole::PolarityFlag(a) => Some((a.short, quote! { ::ecmd::parse::FlagKind::Polar })),
+        FieldRole::BoolFlag(a) => Some((a.short, quote! { ::ecmd::FlagKind::Bool })),
+        FieldRole::PolarityFlag(a) => Some((a.short, quote! { ::ecmd::FlagKind::Polar })),
         FieldRole::ValuedFlag(a) | FieldRole::RepeatableValueFlag(a) => {
-            Some((a.short, quote! { ::ecmd::parse::FlagKind::Value }))
+            Some((a.short, quote! { ::ecmd::FlagKind::Value }))
         }
-        FieldRole::PolarValueFlag(a) => {
-            Some((a.short, quote! { ::ecmd::parse::FlagKind::PolarValue }))
-        }
+        FieldRole::PolarValueFlag(a) => Some((a.short, quote! { ::ecmd::FlagKind::PolarValue })),
         _ => None,
     }
-}
-
-fn resolve_clears(role: &FieldRole, all: &[ClassifiedField<'_>]) -> Vec<char> {
-    clears_targets(role)
-        .iter()
-        .filter_map(|target| all.iter().find(|cf| cf.ident == target).map(|cf| cf.id))
-        .collect()
 }
 
 fn flag_value_name(role: &FieldRole) -> &str {

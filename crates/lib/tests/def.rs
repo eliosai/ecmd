@@ -1,77 +1,107 @@
-//! Constructing and copying command definitions
+//! Building definitions at runtime and reading them back
 
 #![expect(clippy::unwrap_used, reason = "tests verify known structure")]
 
-mod fixtures;
+use ecmd::{Command, Def, Flag, Positional, Style};
 
-use ecmd::meta::{CommandDef, OwnedCommandDef, PositionalDef};
-use ecmd::parse::OnUnknown;
-use ecmd::style::{HelpStyle, Style};
-use fixtures::{ALIAS_FLAGS, make_def};
+/// A sample command.
+#[derive(Command)]
+#[command(name = "sample", style = "gnu")]
+struct Sample {
+    /// list everything
+    #[flag(short = 'a', long = "all")]
+    all: bool,
+    /// the output file
+    #[flag(short = 'o', long = "out", value_name = "FILE")]
+    out: Option<String>,
+    source: String,
+    rest: ecmd::Operands,
+}
 
-// ── Backward compat: existing static constructibility ──────
-#[test]
-fn command_def_is_const_constructible() {
-    static DEF: CommandDef = CommandDef {
-        name: "test",
-        about: "",
-        short_doc: "",
-        style: Style::Posix,
-        help_style: HelpStyle::from_parse_style(Style::Posix),
-        on_unknown: OnUnknown::Reject,
-        permute: false,
-        flags: &[],
-        positionals: &[PositionalDef {
-            name: "target",
-            required: true,
-            desc: "",
-            label: "",
-            default_value: "",
-            hidden: false,
-            spread: false,
-        }],
-        has_rest: false,
-        rest_label: "",
-        rest_hidden: false,
-        rest_desc: "",
-        rest_default: "",
-        rest_required: false,
-        value_rules: &[],
-        numeric_operands: &[],
-        first_numeric_value: None,
-        exact_long: false,
-        no_implicit_version: false,
-        equals_only: &[],
-        attached_values: &[],
-        separated_values: &[],
-        prefixed_values: &[],
-        exclusive_groups: &[],
-        tags: &[],
-        description: &[],
-        extra: &[],
-        exit_status: &[],
-    };
-    assert_eq!(DEF.name, "test");
-    assert!(DEF.positionals.first().unwrap().required);
+fn built() -> Def {
+    Def::builder("sample")
+        .about("A sample command.")
+        .style(Style::Gnu)
+        .flag(Flag::new('a').long("all").desc("list everything"))
+        .flag(
+            Flag::new('o')
+                .long("out")
+                .value("FILE")
+                .desc("the output file"),
+        )
+        .positional(Positional::new("source").required())
+        .rest(Positional::new("rest"))
+        .build()
 }
 
 #[test]
-fn owned_definition_preserves_static_shape() {
-    let static_def = make_def(
-        "alias",
-        "Define or display aliases.",
-        "",
-        &ALIAS_FLAGS,
-        &["Display aliases when no arguments are given."],
-        &[],
-        &["Returns success unless a name is invalid."],
+fn the_derived_command_reads_every_field() {
+    let sample = Sample::parse(&["-a", "-o", "out.txt", "src", "more"]).unwrap();
+    assert!(sample.all);
+    assert_eq!(sample.out.as_deref(), Some("out.txt"));
+    assert_eq!(sample.source, "src");
+    assert_eq!(sample.rest.first(), Some("more"));
+}
+
+#[test]
+fn the_builder_matches_the_derived_definition() {
+    assert_eq!(&built(), Sample::def());
+    assert_eq!(built().help(), Sample::def().help());
+}
+
+#[test]
+fn a_built_definition_scans_like_the_derived_one() {
+    let def = built();
+    let scan = def.scan(&["-a", "--out=x", "src", "extra"]).unwrap();
+    let derived = Sample::def()
+        .scan(&["-a", "--out=x", "src", "extra"])
+        .unwrap();
+    assert_eq!(scan, derived);
+    assert_eq!(scan.operands(), ["src", "extra"]);
+}
+
+#[test]
+fn a_long_only_flag_takes_a_synthetic_identity_from_its_position() {
+    let def = Def::builder("t")
+        .flag(Flag::new('v'))
+        .flag(Flag::long_only("verbose"))
+        .build();
+    let verbose = def.flag_named("verbose").unwrap();
+    assert_eq!(verbose.short(), None);
+    assert_eq!(verbose.long_name(), Some("verbose"));
+    assert!(verbose.id() >= '\u{E000}');
+    assert_eq!(def.flag(verbose.id()).map(Flag::id), Some(verbose.id()));
+    assert_eq!(def.flag_named("v").map(Flag::id), Some('v'));
+}
+
+#[test]
+fn a_definition_can_be_renamed_and_tagged() {
+    let def = built().with_name("alias").with_tag("special", "");
+    assert_eq!(def.name(), "alias");
+    assert_eq!(def.tag("special"), Some(""));
+    assert_eq!(def.tags().collect::<Vec<_>>(), [("special", "")]);
+    assert!(def.usage().starts_with("alias "));
+}
+
+#[test]
+fn a_flag_refuses_values_outside_its_accepted_set() {
+    let def = Def::builder("t")
+        .flag(
+            Flag::new('m')
+                .value("MODE")
+                .possible_values(["fast", "slow"]),
+        )
+        .build();
+    assert_eq!(
+        def.scan(&["-m", "fast"]).unwrap().flags(),
+        [ecmd::Parsed::Value('m', "fast")]
     );
-
-    let owned: OwnedCommandDef = static_def.clone().into_owned();
-
-    assert_eq!(owned.name(), static_def.name);
-    assert_eq!(owned.usage(), static_def.usage());
-    assert_eq!(owned.help(), static_def.help());
-    assert_eq!(owned.flags().len(), static_def.flags.len());
-    assert_eq!(owned.scan(&["-p"]), static_def.scan(&["-p"]));
+    assert_eq!(
+        def.scan(&["-m", "warp"]).unwrap_err(),
+        ecmd::Error::InvalidValue {
+            flag: "-m".to_owned(),
+            value: "warp".to_owned(),
+            reason: "expected one of fast, slow".to_owned(),
+        }
+    );
 }

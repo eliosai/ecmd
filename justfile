@@ -14,7 +14,7 @@ check:
     cargo check --workspace --all-targets --all-features
     cargo check -p ecmd --no-default-features
     cargo check -p ecmd --no-default-features --features rkyv
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Format the workspace
 fmt:

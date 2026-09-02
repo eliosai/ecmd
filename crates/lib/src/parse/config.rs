@@ -1,31 +1,27 @@
 //! What every scanning step shares
 
-use crate::meta::Storage;
+use crate::def::{Def, Flag, Policy};
 use crate::style::Style;
 
 use super::classify::is_polar;
-use super::{FlagDef, OnUnknown, Policy};
 
 /// The declared flags, the policy and the style one scan runs under
-pub struct ScanConfig<'a, S: Storage, P: Storage> {
-    pub flags: &'a [FlagDef<S>],
-    pub policy: Policy<'a, P>,
-    pub on_unknown: OnUnknown,
+pub struct ScanConfig<'a> {
+    pub flags: &'a [Flag],
+    pub policy: &'a Policy,
+    pub lenient: bool,
+    pub permute: bool,
     pub style: Style,
     pub has_polarity: bool,
     pub index: [u16; 128],
 }
 
-impl<'a, S: Storage, P: Storage> ScanConfig<'a, S, P> {
-    pub fn new(
-        flags: &'a [FlagDef<S>],
-        policy: Policy<'a, P>,
-        on_unknown: OnUnknown,
-        style: Style,
-    ) -> Self {
+impl<'a> ScanConfig<'a> {
+    pub fn new(def: &'a Def) -> Self {
+        let flags = def.flags();
         let mut index = [0_u16; 128];
         for (position, flag) in flags.iter().enumerate().rev() {
-            if let Some(slot) = ascii_slot(flag.ch).and_then(|slot| index.get_mut(slot))
+            if let Some(slot) = ascii_slot(flag.id()).and_then(|slot| index.get_mut(slot))
                 && let Ok(entry) = u16::try_from(position.saturating_add(1))
             {
                 *slot = entry;
@@ -33,10 +29,11 @@ impl<'a, S: Storage, P: Storage> ScanConfig<'a, S, P> {
         }
         Self {
             flags,
-            policy,
-            on_unknown,
-            style,
-            has_polarity: flags.iter().any(|flag| is_polar(&flag.kind)),
+            policy: def.policy(),
+            lenient: def.lenient(),
+            permute: def.permute(),
+            style: def.style(),
+            has_polarity: flags.iter().any(|flag| is_polar(flag.flag_kind())),
             index,
         }
     }
@@ -46,8 +43,8 @@ impl<'a, S: Storage, P: Storage> ScanConfig<'a, S, P> {
     }
 
     /// The position and definition of the flag with this identity
-    pub fn find(&self, ch: char) -> Option<(usize, &'a FlagDef<S>)> {
-        let indexed = ascii_slot(ch)
+    pub fn find(&self, id: char) -> Option<(usize, &'a Flag)> {
+        let indexed = ascii_slot(id)
             .and_then(|slot| self.index.get(slot))
             .map_or(0, |entry| usize::from(*entry));
         if indexed > 0 {
@@ -57,16 +54,17 @@ impl<'a, S: Storage, P: Storage> ScanConfig<'a, S, P> {
         self.flags
             .iter()
             .enumerate()
-            .find(|(_, flag)| flag.ch == ch)
+            .find(|(_, flag)| flag.id() == id)
     }
 
     /// The label the command prefers for a flag: its short, or its long when it has no short
     pub fn preferred_label(&self, position: usize) -> String {
-        match self.flags.get(position) {
-            Some(flag) if flag.ch >= '\u{E000}' => format!("--{}", flag.long.as_ref()),
-            Some(flag) => format!("-{}", flag.ch),
-            None => String::new(),
-        }
+        self.flags.get(position).map_or_else(String::new, |flag| {
+            flag.short().map_or_else(
+                || format!("--{}", flag.long_name().unwrap_or("")),
+                |short| format!("-{short}"),
+            )
+        })
     }
 }
 

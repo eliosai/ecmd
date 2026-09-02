@@ -1,15 +1,15 @@
 //! The util-linux dialect, a leading blank, `Usage:` alone and a `(1)` trailer
 
-use crate::meta::{CommandDef, Storage};
-use crate::parse::{FlagDef, FlagKind};
+use crate::def::FlagKind;
+use crate::def::{Def, Flag};
 
 use super::{has_tag, spaced_help, tag_or, tag_width};
 
-pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
+pub fn render(def: &Def) -> String {
     let mut out = String::with_capacity(512);
     out.push('\n');
     out.push_str("Usage:\n");
-    let short_doc = def.short_doc.as_ref();
+    let short_doc = def.short_doc().unwrap_or("");
     let usage = if short_doc.is_empty() {
         def.usage()
     } else {
@@ -20,10 +20,10 @@ pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
         out.push_str(line);
         out.push('\n');
     }
-    if !def.description.as_ref().is_empty() {
+    if def.description().len() > 0 {
         out.push('\n');
-        for line in def.description.as_ref() {
-            out.push_str(line.as_ref());
+        for line in def.description() {
+            out.push_str(line);
             out.push('\n');
         }
     }
@@ -49,7 +49,7 @@ pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
         out.push('\n');
     }
     let pair = tag_width(def, "help_pair_width", width);
-    let owns = |ch: char| def.flags().iter().any(|flag| flag.ch == ch);
+    let owns = |ch: char| def.flags().iter().any(|flag| flag.id() == ch);
     let help_label = if owns('h') {
         "    --help"
     } else {
@@ -61,7 +61,7 @@ pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
         tag_or(def, "help_desc", "display this help and exit"),
         pair,
     );
-    if !owns('V') && !def.no_implicit_version {
+    if !owns('V') && !def.policy().no_implicit_version {
         push_entry(
             &mut out,
             "-V, --version",
@@ -70,9 +70,9 @@ pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
         );
     }
 
-    for block in def.extra.as_ref() {
+    for block in def.extra() {
         out.push('\n');
-        for line in block.as_ref().lines() {
+        for line in block.lines() {
             out.push_str(line);
             out.push('\n');
         }
@@ -88,19 +88,19 @@ pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
 }
 
 /// Every documented flag as util-linux labels and describes it.
-pub fn entries<S: Storage>(def: &CommandDef<S>) -> Vec<(String, String)> {
+pub fn entries(def: &Def) -> Vec<(String, String)> {
     let mut entries: Vec<(String, String)> = def
         .flags()
         .iter()
-        .filter(|flag| !flag.hidden && !flag.desc.as_ref().is_empty())
-        .filter(|flag| !matches!(flag.long.as_ref(), "help" | "version"))
-        .map(|flag| (label(flag), flag.desc.as_ref().to_owned()))
+        .filter(|flag| !flag.is_hidden() && !flag.description().is_empty())
+        .filter(|flag| !matches!(flag.long_name().unwrap_or(""), "help" | "version"))
+        .map(|flag| (label(flag), flag.description().to_owned()))
         .collect();
     for (name, value) in def.tags() {
-        if name.as_ref() != "help_row" {
+        if name != "help_row" {
             continue;
         }
-        let mut parts = value.as_ref().splitn(3, '\t');
+        let mut parts = value.splitn(3, '\t');
         let (Some(at), Some(label), Some(desc)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
@@ -133,24 +133,24 @@ pub fn push_entry(out: &mut String, label: &str, desc: &str, width: usize) {
 }
 
 /// util-linux writes a long-only flag under the long column and brackets an optional value.
-pub fn label<S: Storage>(flag: &FlagDef<S>) -> String {
-    let authored = flag.help_label.as_ref();
+pub fn label(flag: &Flag) -> String {
+    let authored = flag.label().unwrap_or("");
     if !authored.is_empty() {
         return authored.to_owned();
     }
-    let long = flag.long.as_ref();
-    let value = flag.value_name.as_ref();
-    let mut label = if flag.ch.is_ascii_graphic() {
+    let long = flag.long_name().unwrap_or("");
+    let value = flag.value_name().unwrap_or("");
+    let mut label = if flag.id().is_ascii_graphic() {
         if long.is_empty() {
-            format!("-{}", flag.ch)
+            format!("-{}", flag.id())
         } else {
-            format!("-{}, --{long}", flag.ch)
+            format!("-{}, --{long}", flag.id())
         }
     } else {
         format!("    --{long}")
     };
     if !value.is_empty() {
-        if matches!(flag.kind, FlagKind::Value | FlagKind::PolarValue) {
+        if matches!(flag.flag_kind(), FlagKind::Value | FlagKind::PolarValue) {
             label.push_str(" <");
             label.push_str(value);
             label.push('>');

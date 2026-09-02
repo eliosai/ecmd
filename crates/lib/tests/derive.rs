@@ -10,11 +10,9 @@
     reason = "derive fixtures use direct field and index assertions"
 )]
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
+use ecmd::Command as CommandTrait;
 use ecmd::Command;
-use ecmd::meta::Command as CommandTrait;
-use ecmd::operands::Operands;
-use ecmd::parse::Spelling;
-use ecmd::polarity::{PolarVal, Polarity};
+use ecmd::{Operands, PolarVal, Polarity, Spelling};
 
 // ── Basic: bool flags + positionals ─────────────────────────
 
@@ -249,9 +247,9 @@ struct NoopMetadata {
 #[test]
 fn noop_flags_are_published_in_metadata() {
     let flags: Vec<_> = NoopMetadata::def()
-        .flags
+        .flags()
         .iter()
-        .map(|flag| flag.ch)
+        .map(ecmd::Flag::id)
         .collect();
     assert_eq!(flags, ['e', 'E']);
 }
@@ -348,17 +346,17 @@ fn plus_prefix_with_only_bool_flags_is_operand() {
 #[test]
 fn cd_def_has_flags() {
     let def = Cd::def();
-    assert_eq!(def.name, "cd");
-    assert!(!def.flags.is_empty());
-    assert!(!def.has_rest);
+    assert_eq!(def.name(), "cd");
+    assert!(!def.flags().is_empty());
+    assert!(def.rest().is_none());
 }
 
 #[test]
 fn grep_def_has_positionals() {
     let def = Grep::def();
-    assert_eq!(def.positionals.len(), 1);
-    assert!(def.positionals[0].required);
-    assert!(def.has_rest);
+    assert_eq!(def.positionals().len(), 1);
+    assert!(def.positionals()[0].is_required());
+    assert!(def.rest().is_some());
 }
 
 // ── Doc comments → about/desc ──────────────────────────────────
@@ -379,20 +377,20 @@ struct MyCd {
 
 #[test]
 fn doc_comment_about() {
-    assert_eq!(MyCd::def().about, "Change the shell working directory.");
+    assert_eq!(MyCd::def().about(), "Change the shell working directory.");
 }
 
 #[test]
 fn doc_comment_flag_desc() {
-    let flags = MyCd::def().flags;
-    assert_eq!(flags[0].desc, "Follow symlinks (default).");
-    assert_eq!(flags[1].desc, "Use physical directory.");
+    let flags = MyCd::def().flags();
+    assert_eq!(flags[0].description(), "Follow symlinks (default).");
+    assert_eq!(flags[1].description(), "Use physical directory.");
 }
 
 #[test]
 fn doc_comment_positional_desc() {
-    let pos = MyCd::def().positionals;
-    assert_eq!(pos[0].desc, "Target directory.");
+    let pos = MyCd::def().positionals();
+    assert_eq!(pos[0].description(), "Target directory.");
 }
 
 #[test]
@@ -445,9 +443,9 @@ fn value_name_in_help() {
 
 #[test]
 fn value_name_in_flag_def() {
-    let flags = MyRead::def().flags;
-    let n_flag = flags.iter().find(|f| f.ch == 'n').unwrap();
-    assert_eq!(n_flag.value_name, "NCHARS");
+    let flags = MyRead::def().flags();
+    let n_flag = flags.iter().find(|f| f.id() == 'n').unwrap();
+    assert_eq!(n_flag.value_name(), Some("NCHARS"));
 }
 
 // ── Tags ───────────────────────────────────────────────────────
@@ -466,15 +464,15 @@ struct Export {
 #[test]
 fn tags_present() {
     let def = Export::def();
-    assert_eq!(def.tags.len(), 3);
-    assert_eq!(def.tags[0], ("kind", "special"));
-    assert_eq!(def.tags[1], ("special", ""));
-    assert_eq!(def.tags[2], ("assignment", ""));
+    assert_eq!(def.tags().len(), 3);
+    assert_eq!(def.tags().next().unwrap(), ("kind", "special"));
+    assert_eq!(def.tags().nth(1).unwrap(), ("special", ""));
+    assert_eq!(def.tags().nth(2).unwrap(), ("assignment", ""));
 }
 
 #[test]
 fn tags_empty_when_none() {
-    assert!(MyCd::def().tags.is_empty());
+    assert_eq!(MyCd::def().tags().len(), 0);
 }
 
 // ── Doc comment sections → bash-compatible help ────────────────
@@ -532,7 +530,7 @@ fn derive_alias_help_matches_bash() {
 
 #[test]
 fn derive_alias_about_from_first_paragraph() {
-    assert_eq!(BashAlias::def().about, "Define or display aliases.");
+    assert_eq!(BashAlias::def().about(), "Define or display aliases.");
 }
 
 #[test]
@@ -610,7 +608,7 @@ fn derive_echo_extra_help_replaces_doc_extra() {
 #[test]
 fn derive_echo_no_help_tag() {
     let def = BashEcho::def();
-    assert!(def.tags.iter().any(|&(k, _)| k == "no_help"));
+    assert!(def.tags().any(|(k, _)| k == "no_help"));
 }
 
 // ── Multi-line flag descriptions ───────────────────────────────
@@ -717,7 +715,7 @@ fn gnu_derive_short_flags_still_work() {
 fn gnu_scalar_flags_reject_repetition() {
     assert_eq!(
         Basename::parse(&["--multiple", "--multiple", "x"]).err(),
-        Some(ecmd::error::Error::RepeatedFlag("--multiple".to_owned()))
+        Some(ecmd::Error::RepeatedFlag("--multiple".to_owned()))
     );
 }
 
@@ -749,7 +747,7 @@ fn no_override_can_allow_one_scalar_flag_to_repeat() {
     assert!(cmd.parents);
     assert_eq!(
         MixedRepeat::parse(&["-v", "-v"]).err(),
-        Some(ecmd::error::Error::RepeatedFlag("-v".to_owned()))
+        Some(ecmd::Error::RepeatedFlag("-v".to_owned()))
     );
 }
 
@@ -757,29 +755,33 @@ fn no_override_can_allow_one_scalar_flag_to_repeat() {
 fn gnu_value_flags_can_reject_option_looking_values() {
     assert_eq!(
         Basename::parse(&["--suffix", "--zero", "x"]).err(),
-        Some(ecmd::error::Error::MissingValue("--suffix".to_owned()))
+        Some(ecmd::Error::MissingValue("--suffix".to_owned()))
     );
     assert_eq!(
         Basename::parse(&["-s", "-1", "x"]).err(),
-        Some(ecmd::error::Error::UnknownFlag("-1".to_owned()))
+        Some(ecmd::Error::UnknownFlag("-1".to_owned()))
     );
     assert_eq!(
         Basename::parse(&["-s", "-w", "x"]).err(),
-        Some(ecmd::error::Error::UnknownFlag("-w".to_owned()))
+        Some(ecmd::Error::UnknownFlag("-w".to_owned()))
     );
 }
 
 #[test]
 fn derive_metadata_records_occurrence_and_value_policy() {
     let basename = Basename::def();
-    let suffix = basename.flags().iter().find(|flag| flag.ch == 's').unwrap();
-    assert!(!suffix.repeatable);
-    assert!(!suffix.allow_hyphen_values);
+    let suffix = basename
+        .flags()
+        .iter()
+        .find(|flag| flag.id() == 's')
+        .unwrap();
+    assert!(!suffix.is_repeatable());
+    assert!(!suffix.allows_hyphen_values());
 
     let hash = Hash::def();
-    let paths = hash.flags().iter().find(|flag| flag.ch == 'p').unwrap();
-    assert!(paths.repeatable);
-    assert!(paths.allow_hyphen_values);
+    let paths = hash.flags().iter().find(|flag| flag.id() == 'p').unwrap();
+    assert!(paths.is_repeatable());
+    assert!(paths.allows_hyphen_values());
 }
 
 #[test]
@@ -803,7 +805,7 @@ fn gnu_derive_help_format() {
 #[test]
 fn gnu_derive_help_is_signalled() {
     let result = Basename::parse(&["--help"]);
-    assert_eq!(result.err(), Some(ecmd::error::Error::HelpRequested));
+    assert_eq!(result.err(), Some(ecmd::Error::HelpRequested));
 }
 
 // ── Long-only options (a long name with no short char) ───────
@@ -863,7 +865,7 @@ struct ExactLong {
 fn exact_long_tag_rejects_unambiguous_prefixes() {
     assert_eq!(
         ExactLong::parse(&["--verb", "x"]).unwrap_err(),
-        ecmd::error::Error::UnknownFlag("--verb".to_owned())
+        ecmd::Error::UnknownFlag("--verb".to_owned())
     );
     let command = ExactLong::parse(&["--verbose", "x"]).unwrap();
     assert!(command.verbose);
@@ -874,7 +876,7 @@ fn exact_long_tag_rejects_unambiguous_prefixes() {
 fn equals_only_tag_rejects_a_separated_long_value() {
     assert_eq!(
         ExactLong::parse(&["--limit", "2", "x"]).unwrap_err(),
-        ecmd::error::Error::UnknownFlag("--limit".to_owned())
+        ecmd::Error::UnknownFlag("--limit".to_owned())
     );
     let command = ExactLong::parse(&["--limit=2", "x"]).unwrap();
     assert_eq!(command.limit.as_deref(), Some("2"));
@@ -916,7 +918,6 @@ fn optional_value_accepts_attached_short_and_long_values() {
 fn owned_definition_keeps_optional_value_parsing() {
     OptionalValue::def()
         .clone()
-        .into_owned()
         .scan(&["--replace"])
         .expect("owned metadata parses like the command");
 }
@@ -959,7 +960,7 @@ fn optional_next_value_consumes_a_non_option_or_uses_its_default() {
     assert_eq!(&*consumed.args, &["printf"]);
 
     let defaulted = OptionalNextValue::parse(&["-l", "-r"]).unwrap_err();
-    assert_eq!(defaulted, ecmd::error::Error::UnknownFlag("-r".to_owned()));
+    assert_eq!(defaulted, ecmd::Error::UnknownFlag("-r".to_owned()));
 
     let defaulted = OptionalNextValue::parse(&["-l"]).unwrap();
     assert_eq!(defaulted.lines.as_deref(), Some("1"));
@@ -1025,7 +1026,7 @@ fn numeric_next_requires_and_selectively_consumes_numbering_specs() {
     assert_eq!(&*clustered.args, &["file"]);
 
     let missing = NumericNextValue::parse(&["-n"]).unwrap_err();
-    assert_eq!(missing, ecmd::error::Error::MissingValue("-n".to_owned()));
+    assert_eq!(missing, ecmd::Error::MissingValue("-n".to_owned()));
 
     let filename = NumericNextValue::parse(&["-n", "file"]).unwrap();
     assert_eq!(filename.number.as_deref(), Some("5"));
@@ -1046,7 +1047,7 @@ fn numeric_next_requires_and_selectively_consumes_numbering_specs() {
     let long_missing = NumericNextValue::parse(&["--number-lines"]).unwrap_err();
     assert_eq!(
         long_missing,
-        ecmd::error::Error::MissingValue("--number-lines".to_owned())
+        ecmd::Error::MissingValue("--number-lines".to_owned())
     );
 }
 
@@ -1077,7 +1078,7 @@ fn exact_short_default_does_not_weaken_clustered_or_long_values() {
     let clustered_missing = ExactShortDefault::parse(&["-ae"]).unwrap_err();
     assert_eq!(
         clustered_missing,
-        ecmd::error::Error::MissingValue("-e".to_owned())
+        ecmd::Error::MissingValue("-e".to_owned())
     );
 
     let long = ExactShortDefault::parse(&["--expand", "X", "file"]).unwrap();
@@ -1087,7 +1088,7 @@ fn exact_short_default_does_not_weaken_clustered_or_long_values() {
     let long_missing = ExactShortDefault::parse(&["--expand"]).unwrap_err();
     assert_eq!(
         long_missing,
-        ecmd::error::Error::MissingValue("--expand".to_owned())
+        ecmd::Error::MissingValue("--expand".to_owned())
     );
 }
 
@@ -1120,14 +1121,14 @@ fn prefixed_value_tag_accepts_value_before_short_flag() {
 fn exclusive_flags_report_the_flag_that_created_the_conflict() {
     assert_eq!(
         DenseFlags::parse(&["-u", "-y"]).unwrap_err(),
-        ecmd::error::Error::ConflictingFlags {
+        ecmd::Error::ConflictingFlags {
             current: "-y".to_owned(),
             previous: "-u".to_owned(),
         }
     );
     assert_eq!(
         DenseFlags::parse(&["--side-by-side", "--context=2"]).unwrap_err(),
-        ecmd::error::Error::ConflictingFlags {
+        ecmd::Error::ConflictingFlags {
             current: "--context".to_owned(),
             previous: "-y".to_owned(),
         }
@@ -1171,7 +1172,7 @@ fn attached_value_tag_rejects_a_separated_short_value() {
     assert_eq!(&*command.args, &["path"]);
     assert_eq!(
         AttachedValue::parse(&["-O", "3", "path"]).unwrap_err(),
-        ecmd::error::Error::MissingValue("-O".to_owned())
+        ecmd::Error::MissingValue("-O".to_owned())
     );
 }
 
@@ -1320,11 +1321,11 @@ fn unimplemented_flags_are_declared_but_rejected_at_runtime() {
     let definition = Fetch::def();
     let scan = definition.scan(&["--ftp-port=host"]).unwrap();
 
-    assert!(!definition.flags()[0].implemented);
+    assert!(!definition.flags()[0].is_implemented());
     assert_eq!(scan.unimplemented(), [Spelling::Long("ftp-port")]);
     assert_eq!(
         Fetch::parse(&["--ftp-port=host"]).unwrap_err(),
-        ecmd::error::Error::UnimplementedFlag("--ftp-port".to_owned())
+        ecmd::Error::UnimplementedFlag("--ftp-port".to_owned())
     );
     assert!(definition.help().contains("(external only)"));
 }
@@ -1340,7 +1341,7 @@ struct VersionOptOut {
 fn gnu_command_can_reject_the_implicit_uppercase_version_flag() {
     assert_eq!(
         VersionOptOut::parse(&["-V"]).unwrap_err(),
-        ecmd::error::Error::UnknownFlag("-V".to_owned())
+        ecmd::Error::UnknownFlag("-V".to_owned())
     );
     assert!(VersionOptOut::parse(&["-v"]).unwrap().version);
     assert!(VersionOptOut::def().help().contains("      --version"));
@@ -1410,7 +1411,7 @@ fn numeric_next_value_consumes_only_its_numeric_shape() {
 
     assert_eq!(
         PolicyValues::parse(&["-n"]).unwrap_err(),
-        ecmd::error::Error::MissingValue("-n".to_owned())
+        ecmd::Error::MissingValue("-n".to_owned())
     );
 }
 
@@ -1424,11 +1425,11 @@ fn exact_short_value_uses_default_without_changing_long_form() {
     assert_eq!(attached.expand_tabs.as_deref(), Some("4"));
     assert_eq!(
         PolicyValues::parse(&["-ae", "-t"]).unwrap_err(),
-        ecmd::error::Error::MissingValue("-e".to_owned())
+        ecmd::Error::MissingValue("-e".to_owned())
     );
     assert_eq!(
         PolicyValues::parse(&["--expand-tabs"]).unwrap_err(),
-        ecmd::error::Error::MissingValue("--expand-tabs".to_owned())
+        ecmd::Error::MissingValue("--expand-tabs".to_owned())
     );
 }
 
@@ -1489,7 +1490,7 @@ struct StrictLong {
 fn exact_long_rejects_unambiguous_abbreviations() {
     assert_eq!(
         StrictLong::parse(&["--out=value"]).unwrap_err(),
-        ecmd::error::Error::UnknownFlag("--out".to_owned())
+        ecmd::Error::UnknownFlag("--out".to_owned())
     );
 }
 
@@ -1497,7 +1498,7 @@ fn exact_long_rejects_unambiguous_abbreviations() {
 fn equals_only_requires_an_attached_long_value() {
     assert_eq!(
         StrictLong::parse(&["--output", "value"]).unwrap_err(),
-        ecmd::error::Error::UnknownFlag("--output".to_owned())
+        ecmd::Error::UnknownFlag("--output".to_owned())
     );
     assert_eq!(
         StrictLong::parse(&["--output=value"])
@@ -1527,11 +1528,11 @@ struct ShortPlacement {
 fn short_value_placement_is_enforced() {
     assert_eq!(
         ShortPlacement::parse(&["-svalue"]).unwrap_err(),
-        ecmd::error::Error::UnknownFlag("-svalue".to_owned())
+        ecmd::Error::UnknownFlag("-svalue".to_owned())
     );
     assert_eq!(
         ShortPlacement::parse(&["-a", "value"]).unwrap_err(),
-        ecmd::error::Error::MissingValue("-a".to_owned())
+        ecmd::Error::MissingValue("-a".to_owned())
     );
     assert_eq!(
         ShortPlacement::parse(&["-s", "one", "-atwo"])
@@ -1595,7 +1596,7 @@ fn exclusive_groups_reject_only_cross_group_combinations() {
     );
     assert_eq!(
         OutputStyle::parse(&["--unified", "--side"]).unwrap_err(),
-        ecmd::error::Error::ConflictingFlags {
+        ecmd::Error::ConflictingFlags {
             current: "--side".to_owned(),
             previous: "--unified".to_owned(),
         }

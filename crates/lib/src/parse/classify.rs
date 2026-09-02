@@ -1,10 +1,9 @@
 //! Sorting one argument into a flag cluster or an operand
 
+use crate::def::FlagKind;
 use crate::polarity::Polarity;
 
-use super::FlagKind;
-
-pub const fn is_polar(kind: &FlagKind) -> bool {
+pub const fn is_polar(kind: FlagKind) -> bool {
     matches!(kind, FlagKind::Polar | FlagKind::PolarValue)
 }
 

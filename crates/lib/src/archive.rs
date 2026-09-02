@@ -1,15 +1,16 @@
-//! rkyv adapters for owned command metadata
+//! rkyv wrappers for the enums and nested text lists a definition holds
 
 use core::fmt;
+use std::borrow::Cow;
 
 use rkyv::rancor::{Fallible, Source};
-use rkyv::with::{ArchiveWith, DeserializeWith, Map, SerializeWith};
+use rkyv::ser::{Allocator, Writer};
+use rkyv::string::ArchivedString;
+use rkyv::vec::{ArchivedVec, VecResolver};
+use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Deserialize, Place, Serialize};
 
-use crate::meta::{CommandDef, Owned, PositionalDef};
-use crate::parse::FlagDef;
-use crate::parse::{FlagKind, OnUnknown};
-use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
+use crate::def::{FlagKind, ValueMode};
 use crate::style::{HelpStyle, Style};
 
 /// A fieldless enum stored as one byte
@@ -19,8 +20,6 @@ trait Coded: Sized {
 }
 
 /// Archives a fieldless enum as its byte code
-#[doc(hidden)]
-#[non_exhaustive]
 pub struct Code;
 
 impl<T: Coded> ArchiveWith<T> for Code {
@@ -80,7 +79,6 @@ macro_rules! coded {
 
 coded!(Style { Posix = 0, Gnu = 1 });
 coded!(HelpStyle { Bash = 0, Gnu = 1, Clap = 2, ClapWide = 3, UtilLinux = 4 });
-coded!(OnUnknown { Reject = 0, PassThrough = 1 });
 coded!(FlagKind { Bool = 0, Value = 1, Polar = 2, PolarValue = 3, Noop = 4 });
 coded!(ValueMode {
     AttachedOrDefault = 0,
@@ -91,284 +89,134 @@ coded!(ValueMode {
     AnyNextOrDefault = 5,
 });
 
-/// Archive adapter for an owned flag definition
-#[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = FlagDef<Owned>)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "mirrors the definition it archives"
-)]
-pub struct FlagDefDef {
-    ch: char,
-    long: String,
-    aliases: Vec<String>,
-    #[rkyv(with = Code)]
-    kind: FlagKind,
-    clears: Vec<char>,
-    desc: String,
-    value_name: String,
-    hidden: bool,
-    implemented: bool,
-    repeatable: bool,
-    allow_hyphen_values: bool,
-    possible_values: Vec<String>,
-    help_values: Vec<String>,
-    default_value: String,
-    help_label: String,
-    visible_aliases: Vec<String>,
-}
+/// Archives a `Cow` of one archivable value and reads it back as an owned one
+pub struct Owned;
 
-impl From<FlagDefDef> for FlagDef<Owned> {
-    fn from(value: FlagDefDef) -> Self {
-        Self {
-            ch: value.ch,
-            long: value.long,
-            aliases: value.aliases,
-            kind: value.kind,
-            clears: value.clears,
-            desc: value.desc,
-            value_name: value.value_name,
-            hidden: value.hidden,
-            implemented: value.implemented,
-            repeatable: value.repeatable,
-            allow_hyphen_values: value.allow_hyphen_values,
-            possible_values: value.possible_values,
-            help_values: value.help_values,
-            default_value: value.default_value,
-            help_label: value.help_label,
-            visible_aliases: value.visible_aliases,
-        }
+impl<T: Archive + Clone> ArchiveWith<Cow<'static, T>> for Owned {
+    type Archived = T::Archived;
+    type Resolver = T::Resolver;
+
+    fn resolve_with(field: &Cow<'static, T>, resolver: T::Resolver, out: Place<T::Archived>) {
+        T::resolve(field, resolver, out);
     }
 }
 
-/// Archive adapter for an owned positional definition
-#[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = PositionalDef<Owned>)]
-pub struct PositionalDefDef {
-    name: String,
-    required: bool,
-    desc: String,
-    label: String,
-    default_value: String,
-    hidden: bool,
-    spread: bool,
-}
-
-/// Archive adapter for an owned value rule
-#[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = ValueRule<Owned>)]
-pub struct ValueRuleDef {
-    ch: char,
-    #[rkyv(with = Code)]
-    mode: ValueMode,
-    default: String,
-}
-
-impl From<ValueRuleDef> for ValueRule<Owned> {
-    fn from(value: ValueRuleDef) -> Self {
-        Self {
-            ch: value.ch,
-            mode: value.mode,
-            default: value.default,
-        }
+impl<T: Serialize<S> + Clone, S: Fallible + ?Sized> SerializeWith<Cow<'static, T>, S> for Owned {
+    fn serialize_with(
+        field: &Cow<'static, T>,
+        serializer: &mut S,
+    ) -> Result<T::Resolver, S::Error> {
+        T::serialize(field, serializer)
     }
 }
 
-impl From<PositionalDefDef> for PositionalDef<Owned> {
-    fn from(value: PositionalDefDef) -> Self {
-        Self {
-            name: value.name,
-            required: value.required,
-            desc: value.desc,
-            label: value.label,
-            default_value: value.default_value,
-            hidden: value.hidden,
-            spread: value.spread,
-        }
+impl<T, D> DeserializeWith<T::Archived, Cow<'static, T>, D> for Owned
+where
+    T: Archive + Clone,
+    T::Archived: Deserialize<T, D>,
+    D: Fallible + ?Sized,
+{
+    fn deserialize_with(
+        field: &T::Archived,
+        deserializer: &mut D,
+    ) -> Result<Cow<'static, T>, D::Error> {
+        field.deserialize(deserializer).map(Cow::Owned)
     }
 }
 
-/// Archive adapter for an owned command definition
-#[derive(Archive, Serialize, Deserialize)]
-#[rkyv(remote = CommandDef<Owned>)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "mirrors the definition it archives"
-)]
-pub struct CommandDefDef {
-    name: String,
-    about: String,
-    short_doc: String,
-    #[rkyv(with = Code)]
-    style: Style,
-    #[rkyv(with = Code)]
-    help_style: HelpStyle,
-    #[rkyv(with = Code)]
-    on_unknown: OnUnknown,
-    permute: bool,
-    #[rkyv(with = Map<FlagDefDef>)]
-    flags: Vec<FlagDef<Owned>>,
-    #[rkyv(with = Map<PositionalDefDef>)]
-    positionals: Vec<PositionalDef<Owned>>,
-    has_rest: bool,
-    rest_label: String,
-    rest_hidden: bool,
-    rest_desc: String,
-    rest_default: String,
-    rest_required: bool,
-    #[rkyv(with = Map<ValueRuleDef>)]
-    value_rules: Vec<ValueRule<Owned>>,
-    numeric_operands: Vec<NumericOperandRule>,
-    first_numeric_value: Option<char>,
-    exact_long: bool,
-    no_implicit_version: bool,
-    equals_only: Vec<char>,
-    attached_values: Vec<char>,
-    separated_values: Vec<char>,
-    prefixed_values: Vec<char>,
-    exclusive_groups: Vec<ExclusiveRule>,
-    tags: Vec<(String, String)>,
-    description: Vec<String>,
-    extra: Vec<String>,
-    exit_status: Vec<String>,
+/// Text lines a definition holds
+type Lines = Cow<'static, [Cow<'static, str>]>;
+
+/// Archives a list of text lines as a vector of strings
+pub struct Texts;
+
+impl ArchiveWith<Lines> for Texts {
+    type Archived = ArchivedVec<ArchivedString>;
+    type Resolver = VecResolver;
+
+    fn resolve_with(field: &Lines, resolver: VecResolver, out: Place<Self::Archived>) {
+        ArchivedVec::resolve_from_len(field.len(), resolver, out);
+    }
 }
 
-impl From<CommandDefDef> for CommandDef<Owned> {
-    fn from(value: CommandDefDef) -> Self {
-        Self {
-            name: value.name,
-            about: value.about,
-            short_doc: value.short_doc,
-            style: value.style,
-            help_style: value.help_style,
-            on_unknown: value.on_unknown,
-            permute: value.permute,
-            flags: value.flags,
-            positionals: value.positionals,
-            has_rest: value.has_rest,
-            rest_label: value.rest_label,
-            rest_hidden: value.rest_hidden,
-            rest_desc: value.rest_desc,
-            rest_default: value.rest_default,
-            rest_required: value.rest_required,
-            value_rules: value.value_rules,
-            numeric_operands: value.numeric_operands,
-            first_numeric_value: value.first_numeric_value,
-            exact_long: value.exact_long,
-            no_implicit_version: value.no_implicit_version,
-            equals_only: value.equals_only,
-            attached_values: value.attached_values,
-            separated_values: value.separated_values,
-            prefixed_values: value.prefixed_values,
-            exclusive_groups: value.exclusive_groups,
-            tags: value.tags,
-            description: value.description,
-            extra: value.extra,
-            exit_status: value.exit_status,
-        }
+impl<S: Fallible + Allocator + Writer + ?Sized> SerializeWith<Lines, S> for Texts
+where
+    S::Error: Source,
+{
+    fn serialize_with(field: &Lines, serializer: &mut S) -> Result<VecResolver, S::Error> {
+        ArchivedVec::serialize_from_iter::<String, _, _>(
+            field.iter().map(ToString::to_string),
+            serializer,
+        )
+    }
+}
+
+impl<D: Fallible + ?Sized> DeserializeWith<ArchivedVec<ArchivedString>, Lines, D> for Texts {
+    fn deserialize_with(field: &ArchivedVec<ArchivedString>, _: &mut D) -> Result<Lines, D::Error> {
+        Ok(Cow::Owned(
+            field
+                .iter()
+                .map(|line| Cow::Owned(line.as_str().to_owned()))
+                .collect(),
+        ))
     }
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
+#[expect(clippy::expect_used, reason = "tests")]
 mod tests {
-    use rkyv::with::With;
+    use rkyv::rancor::Error;
 
-    use super::{ArchivedCommandDefDef, CommandDefDef};
-    use crate::meta::{CommandDef, Owned};
-    use crate::parse::{FlagDef, FlagKind, OnUnknown};
-    use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
+    use crate::def::{ArchivedDef, Def, Flag, Positional};
     use crate::style::{HelpStyle, Style};
 
+    fn sample() -> Def {
+        Def::builder("sample")
+            .about("a sample")
+            .style(Style::Gnu)
+            .help_style(HelpStyle::Clap)
+            .lenient()
+            .permute(false)
+            .exact_long()
+            .no_implicit_version()
+            .flag(Flag::new('f').long("file").value("PATH").unimplemented())
+            .flag(Flag::long_only("verbose").alias("loud").once())
+            .positional(Positional::new("source").required())
+            .rest(Positional::new("files").spread())
+            .tag("kind", "extension")
+            .description(["first", "", "third"])
+            .extra(["tail"])
+            .exit_status(["zero"])
+            .build()
+    }
+
     #[test]
-    fn owned_command_definition_round_trips() {
-        let definition = CommandDef::<Owned> {
-            name: "greet".to_owned(),
-            about: "Print a greeting".to_owned(),
-            short_doc: String::new(),
-            style: Style::Posix,
-            help_style: HelpStyle::Bash,
-            on_unknown: OnUnknown::Reject,
-            permute: false,
-            flags: vec![FlagDef {
-                ch: 'f',
-                long: "ftp-port".to_owned(),
-                aliases: Vec::new(),
-                kind: FlagKind::Value,
-                clears: Vec::new(),
-                desc: String::new(),
-                value_name: "ADDRESS".to_owned(),
-                hidden: false,
-                implemented: false,
-                repeatable: false,
-                allow_hyphen_values: true,
-                possible_values: Vec::new(),
-                help_values: Vec::new(),
-                default_value: String::new(),
-                help_label: String::new(),
-                visible_aliases: Vec::new(),
-            }],
-            positionals: Vec::new(),
-            has_rest: true,
-            rest_label: "ARGS".to_owned(),
-            rest_hidden: false,
-            rest_desc: "Additional values".to_owned(),
-            rest_default: String::new(),
-            rest_required: false,
-            value_rules: vec![ValueRule {
-                ch: 'f',
-                mode: ValueMode::AttachedOrDefault,
-                default: "local".to_owned(),
-            }],
-            numeric_operands: vec![NumericOperandRule {
-                ch: 'f',
-                prefix: '+',
-            }],
-            first_numeric_value: Some('f'),
-            exact_long: true,
-            no_implicit_version: false,
-            equals_only: vec!['f'],
-            attached_values: vec!['f'],
-            separated_values: vec!['s'],
-            prefixed_values: vec!['f'],
-            exclusive_groups: vec![ExclusiveRule { ch: 'f', group: 1 }],
-            tags: vec![("kind".to_owned(), "extension".to_owned())],
-            description: Vec::new(),
-            extra: Vec::new(),
-            exit_status: Vec::new(),
-        };
+    fn a_definition_survives_an_archive_round_trip() {
+        let def = sample();
+        let bytes = rkyv::to_bytes::<Error>(&def).expect("serialize");
+        let archived = rkyv::access::<ArchivedDef, Error>(&bytes).expect("access");
+        let decoded = rkyv::deserialize::<Def, Error>(archived).expect("deserialize");
+        assert_eq!(decoded, def);
+        assert_eq!(decoded.help(), def.help());
+    }
 
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(
-            With::<CommandDef<Owned>, CommandDefDef>::cast(&definition),
-        )
-        .expect("serialize definition");
-        let archived = rkyv::access::<ArchivedCommandDefDef, rkyv::rancor::Error>(&bytes)
-            .expect("access definition");
-        let decoded = rkyv::deserialize::<CommandDef<Owned>, rkyv::rancor::Error>(With::<
-            ArchivedCommandDefDef,
-            CommandDefDef,
-        >::cast(
-            archived
-        ))
-        .expect("deserialize definition");
+    #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, PartialEq)]
+    struct Holder {
+        #[rkyv(with = super::Code)]
+        style: Style,
+    }
 
-        assert_eq!(decoded.name(), definition.name());
-        assert_eq!(decoded.usage(), definition.usage());
-        assert_eq!(decoded.help(), definition.help());
-        assert!(!decoded.flags()[0].implemented);
-        assert!(!decoded.flags()[0].repeatable);
-        assert!(decoded.flags()[0].allow_hyphen_values);
-        assert_eq!(decoded.value_rules[0].default, "local");
-        assert_eq!(decoded.numeric_operands[0].prefix, '+');
-        assert_eq!(decoded.first_numeric_value, Some('f'));
-        assert!(decoded.exact_long);
-        assert_eq!(decoded.equals_only, ['f']);
-        assert_eq!(decoded.attached_values, ['f']);
-        assert_eq!(decoded.separated_values, ['s']);
-        assert_eq!(decoded.prefixed_values, ['f']);
-        assert_eq!(
-            decoded.exclusive_groups.first().map(|rule| rule.group),
-            Some(1)
-        );
+    #[test]
+    fn an_unknown_enum_code_is_refused() {
+        let holder = Holder { style: Style::Gnu };
+        let mut bytes = rkyv::to_bytes::<Error>(&holder).expect("serialize");
+        let archived = rkyv::access::<ArchivedHolder, Error>(&bytes).expect("access");
+        let offset = std::ptr::from_ref(&archived.style).addr() - bytes.as_ptr().addr();
+        if let Some(byte) = bytes.get_mut(offset) {
+            *byte = 200;
+        }
+        let archived = rkyv::access::<ArchivedHolder, Error>(&bytes).expect("access");
+        let decoded = rkyv::deserialize::<Holder, Error>(archived).ok();
+        assert_eq!(decoded, None);
     }
 }

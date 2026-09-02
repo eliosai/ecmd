@@ -2,33 +2,33 @@
 
 mod wrap;
 
-use crate::meta::{CommandDef, PositionalDef, Storage};
-use crate::parse::{FlagDef, FlagKind};
+use crate::def::FlagKind;
+use crate::def::{Def, Flag, Positional};
 use crate::style::HelpStyle;
 
-use super::{is_synthetic, spaced_help};
+use super::spaced_help;
 
 /// Clap-style help: about, `Usage:`, `Arguments:`, then aligned `Options:`, never rewrapped
-pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
+pub fn render(def: &Def) -> String {
     let mut out = String::with_capacity(512);
-    for line in def.about.as_ref().lines() {
+    for line in def.about().lines() {
         out.push_str(line);
         out.push('\n');
     }
-    if !def.description.as_ref().is_empty() {
+    if def.description().len() > 0 {
         out.push('\n');
     }
-    for line in def.description.as_ref() {
-        out.push_str(line.as_ref());
+    for line in def.description() {
+        out.push_str(line);
         out.push('\n');
     }
     push_usage(def, &mut out);
     push_arguments(def, &mut out);
     push_options(def, &mut out);
-    if !def.extra.as_ref().is_empty() {
+    if def.extra().len() > 0 {
         out.push('\n');
-        for line in def.extra.as_ref() {
-            out.push_str(line.as_ref());
+        for line in def.extra() {
+            out.push_str(line);
             out.push('\n');
         }
     }
@@ -36,8 +36,8 @@ pub fn render<S: Storage>(def: &CommandDef<S>) -> String {
 }
 
 /// `Usage:` with any continuation lines indented under the first.
-pub fn push_usage<S: Storage>(def: &CommandDef<S>, out: &mut String) {
-    let short_doc = def.short_doc.as_ref();
+pub fn push_usage(def: &Def, out: &mut String) {
+    let short_doc = def.short_doc().unwrap_or("");
     let usage = if short_doc.is_empty() {
         def.usage()
     } else {
@@ -52,13 +52,13 @@ pub fn push_usage<S: Storage>(def: &CommandDef<S>, out: &mut String) {
 }
 
 /// `Arguments:` listing declared positionals and the rest slot.
-pub fn push_arguments<S: Storage>(def: &CommandDef<S>, out: &mut String) {
+pub fn push_arguments(def: &Def, out: &mut String) {
     let entries = argument_entries(def);
     if entries.is_empty() {
         return;
     }
     out.push_str("\nArguments:\n");
-    if def.help_style == HelpStyle::ClapWide && spaced_help(def) {
+    if def.help_style() == HelpStyle::ClapWide && spaced_help(def) {
         wrap::push_wide_entries(out, &entries, false);
     } else {
         wrap::push_entries(out, &entries);
@@ -66,21 +66,15 @@ pub fn push_arguments<S: Storage>(def: &CommandDef<S>, out: &mut String) {
 }
 
 /// One label and description per visible positional, rest slot last.
-pub fn argument_entries<S: Storage>(def: &CommandDef<S>) -> Vec<(String, String)> {
+pub fn argument_entries(def: &Def) -> Vec<(String, String)> {
     let mut entries: Vec<(String, String)> = def
-        .positionals
-        .as_ref()
+        .positionals()
         .iter()
-        .filter(|positional| !positional.hidden)
+        .filter(|positional| !positional.is_hidden())
         .map(|positional| {
-            let label = positional.label.as_ref();
-            let label = if label.is_empty() {
-                positional.name.as_ref()
-            } else {
-                label
-            };
-            let tail = if positional.spread { "..." } else { "" };
-            let label = if positional.required {
+            let label = positional.shown_as();
+            let tail = if positional.is_spread() { "..." } else { "" };
+            let label = if positional.is_required() {
                 format!("<{label}>{tail}")
             } else {
                 format!("[{label}]{tail}")
@@ -88,27 +82,26 @@ pub fn argument_entries<S: Storage>(def: &CommandDef<S>) -> Vec<(String, String)
             (label, argument_desc(positional))
         })
         .collect();
-    if def.has_rest && !def.rest_hidden {
-        let label = def.rest_label.as_ref();
-        let label = if label.is_empty() { "args" } else { label };
-        let label = if def.rest_required {
+    if let Some(rest) = def.rest().filter(|rest| !rest.is_hidden()) {
+        let label = rest.shown_as();
+        let label = if rest.is_required() {
             format!("<{label}>...")
         } else {
             format!("[{label}]...")
         };
-        entries.push((label, rest_desc(def)));
+        entries.push((label, argument_desc(rest)));
     }
     insert_arg_rows(def, &mut entries);
     entries
 }
 
 /// Help-only positional rows from `arg_row` tags, each `INDEX\tLABEL\tDESC`.
-pub fn insert_arg_rows<S: Storage>(def: &CommandDef<S>, entries: &mut Vec<(String, String)>) {
+pub fn insert_arg_rows(def: &Def, entries: &mut Vec<(String, String)>) {
     for (name, value) in def.tags() {
-        if name.as_ref() != "arg_row" {
+        if name != "arg_row" {
             continue;
         }
-        let mut parts = value.as_ref().splitn(3, '\t');
+        let mut parts = value.splitn(3, '\t');
         let (Some(at), Some(label), Some(desc)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
@@ -117,39 +110,22 @@ pub fn insert_arg_rows<S: Storage>(def: &CommandDef<S>, entries: &mut Vec<(Strin
     }
 }
 
-/// The rest slot's description, with clap's trailing default note.
-pub fn rest_desc<S: Storage>(def: &CommandDef<S>) -> String {
-    let desc = def.rest_desc.as_ref();
-    let default = def.rest_default.as_ref();
-    match (desc.is_empty(), default.is_empty()) {
-        (_, true) => desc.to_owned(),
-        (true, false) => format!("[default: {default}]"),
-        (false, false) => format!("{desc} [default: {default}]"),
-    }
-}
-
 /// `Options:` aligned to the widest label, `--help` and `--version` last.
-pub fn push_options<S: Storage>(def: &CommandDef<S>, out: &mut String) {
+pub fn push_options(def: &Def, out: &mut String) {
     let mut entries: Vec<(String, String)> = def
         .flags()
         .iter()
         .filter(|flag| {
-            !matches!(flag.kind, FlagKind::Noop)
-                && !flag.hidden
-                && (def.help_style == HelpStyle::ClapWide
-                    || !flag.desc.as_ref().is_empty()
-                    || !flag.help_values.as_ref().is_empty())
+            !matches!(flag.flag_kind(), FlagKind::Noop)
+                && !flag.is_hidden()
+                && (def.help_style() == HelpStyle::ClapWide
+                    || !flag.description().is_empty()
+                    || flag.listed_values().len() > 0)
         })
         .map(|flag| (flag_label(flag), flag_desc(flag)))
         .collect();
-    let owns = |ch: char| def.flags().iter().any(|flag| flag.ch == ch);
-    let wording = |key: &str, fallback: &str| {
-        def.tags()
-            .iter()
-            .find_map(|(name, value)| (name.as_ref() == key).then(|| value.as_ref()))
-            .unwrap_or(fallback)
-            .to_owned()
-    };
+    let owns = |ch: char| def.flags().iter().any(|flag| flag.id() == ch);
+    let wording = |key: &str, fallback: &str| def.tag(key).unwrap_or(fallback).to_owned();
     entries.push((
         if owns('h') {
             "    --help".to_owned()
@@ -159,33 +135,21 @@ pub fn push_options<S: Storage>(def: &CommandDef<S>, out: &mut String) {
         wording("help_desc", "Print help"),
     ));
     entries.push((
-        if owns('V') || def.no_implicit_version {
+        if owns('V') || def.policy().no_implicit_version {
             "    --version".to_owned()
         } else {
             "-V, --version".to_owned()
         },
         wording("version_desc", "Print version"),
     ));
-    if def
-        .tags()
-        .iter()
-        .any(|(name, _)| name.as_ref() == "help_first")
-    {
+    if def.tag("help_first").is_some() {
         let help = entries.remove(entries.len().saturating_sub(2));
         entries.insert(0, help);
-        if def
-            .tags()
-            .iter()
-            .any(|(name, _)| name.as_ref() == "version_first")
-        {
+        if def.tag("version_first").is_some() {
             let version = entries.pop().unwrap_or_default();
             entries.insert(1, version);
         }
-    } else if let Some(long) = def
-        .tags()
-        .iter()
-        .find_map(|(name, value)| (name.as_ref() == "help_before").then(|| value.as_ref()))
-    {
+    } else if let Some(long) = def.tag("help_before") {
         let needle = format!("--{long}");
         if let Some(position) = entries.iter().position(|(label, _)| {
             label
@@ -197,7 +161,7 @@ pub fn push_options<S: Storage>(def: &CommandDef<S>, out: &mut String) {
         }
     }
     out.push_str("\nOptions:\n");
-    if def.help_style == HelpStyle::ClapWide {
+    if def.help_style() == HelpStyle::ClapWide {
         wrap::push_wide_entries(out, &entries, spaced_help(def));
     } else {
         wrap::push_entries(out, &entries);
@@ -205,19 +169,19 @@ pub fn push_options<S: Storage>(def: &CommandDef<S>, out: &mut String) {
 }
 
 /// `-c, --long <VAL>`, with the short column blank for long-only flags.
-pub fn flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
-    let override_label = flag.help_label.as_ref();
+pub fn flag_label(flag: &Flag) -> String {
+    let override_label = flag.label().unwrap_or("");
     if !override_label.is_empty() {
         return override_label.to_owned();
     }
     let mut label = String::with_capacity(24);
-    if is_synthetic(flag.ch) {
+    if flag.short().is_none() {
         label.push_str("    ");
     } else {
         label.push('-');
-        label.push(flag.ch);
-        if flag.long.as_ref().is_empty() {
-            let value_name = flag.value_name.as_ref();
+        label.push(flag.id());
+        if flag.long_name().unwrap_or("").is_empty() {
+            let value_name = flag.value_name().unwrap_or("");
             if !value_name.is_empty() {
                 label.push_str(" <");
                 label.push_str(value_name);
@@ -228,8 +192,8 @@ pub fn flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
         label.push_str(", ");
     }
     label.push_str("--");
-    label.push_str(flag.long.as_ref());
-    let value_name = flag.value_name.as_ref();
+    label.push_str(flag.long_name().unwrap_or(""));
+    let value_name = flag.value_name().unwrap_or("");
     if !value_name.is_empty() {
         label.push_str(" <");
         label.push_str(value_name);
@@ -239,33 +203,28 @@ pub fn flag_label<S: Storage>(flag: &FlagDef<S>) -> String {
 }
 
 /// A flag's description with clap's trailing alias, default, and value notes.
-pub fn flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
-    let mut desc = flag.desc.as_ref().to_owned();
+pub fn flag_desc(flag: &Flag) -> String {
+    let mut desc = flag.description().to_owned();
     let empty = desc.is_empty();
-    let default = flag.default_value.as_ref();
+    let default = flag.default().unwrap_or("");
     if !default.is_empty() {
         desc.push_str(" [default: ");
         desc.push_str(default);
         desc.push(']');
     }
     // help lists only what the author asked it to; the accepted set is a parsing fact
-    let values = flag.help_values.as_ref();
+    let values: Vec<&str> = flag.listed_values().collect();
     if !values.is_empty() {
-        let joined = values
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let joined = values.join(", ");
         desc.push_str(" [possible values: ");
         desc.push_str(&joined);
         desc.push(']');
     }
-    let aliases = flag.visible_aliases.as_ref();
+    let aliases: Vec<&str> = flag.visible_aliases().collect();
     if !aliases.is_empty() {
         let joined = aliases
             .iter()
             .map(|alias| {
-                let alias = alias.as_ref();
                 if alias.chars().count() == 1 {
                     format!("-{alias}")
                 } else {
@@ -286,15 +245,16 @@ pub fn flag_desc<S: Storage>(flag: &FlagDef<S>) -> String {
         desc.push(']');
     }
     if empty {
-        desc = desc.trim_start().to_owned();
+        let lead = desc.len().saturating_sub(desc.trim_start().len());
+        desc.replace_range(..lead, "");
     }
     desc
 }
 
 /// A positional's description, with clap's trailing default note when it has one.
-pub fn argument_desc<S: Storage>(positional: &PositionalDef<S>) -> String {
-    let desc = positional.desc.as_ref();
-    let default = positional.default_value.as_ref();
+pub fn argument_desc(positional: &Positional) -> String {
+    let desc = positional.description();
+    let default = positional.default().unwrap_or("");
     match (desc.is_empty(), default.is_empty()) {
         (_, true) => desc.to_owned(),
         (true, false) => format!("[default: {default}]"),
