@@ -1,13 +1,6 @@
-//! Flag polarity for shell-style `+x` / `-x` semantics.
-//!
-//! In POSIX shells, some builtins accept `+flag` to turn OFF and `-flag`
-//! to turn ON. `Polarity` captures this three-state: unset, on, or off.
+//! Shell-style `+x` and `-x` flag polarity
 
-/// Three-state flag polarity.
-///
-/// - `Unset` — flag was not provided (default)
-/// - `On` — flag was provided with `-` prefix
-/// - `Off` — flag was provided with `+` prefix
+/// Three-state flag polarity: unset, on for `-x`, off for `+x`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[expect(clippy::exhaustive_enums, reason = "closed domain: on/off/unset")]
 pub enum Polarity {
@@ -40,10 +33,7 @@ impl Polarity {
     }
 }
 
-/// A valued flag that records its polarity.
-///
-/// Used for flags like `set -o errexit` / `set +o errexit` where
-/// each occurrence carries both a polarity and a string value.
+/// A valued flag occurrence that records its polarity, as in `set -o` and `set +o`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[expect(
     clippy::exhaustive_structs,

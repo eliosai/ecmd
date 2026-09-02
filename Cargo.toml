@@ -1,30 +1,30 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/derive", "crates/tests"]
+members = ["crates/lib", "crates/derive"]
 
 [workspace.package]
 version = "0.6.0"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Joshua Smotritsky"]
 license = "MIT"
 repository = "https://github.com/eliosai/ecmd"
-rust-version = "1.85"
 
 [workspace.dependencies]
-thiserror = "2.0"
-async-trait = "0.1"
 ecmd-derive = { version = "0.6.0", path = "crates/derive" }
+thiserror = "2.0"
+rkyv = { version = "0.8.16", default-features = false, features = ["std", "bytecheck"] }
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
 pretty_assertions = "1"
-compact_str = { version = "0.9", features = ["serde"] }
-rkyv = { version = "=0.8.16", default-features = false, features = ["std", "bytecheck"] }
+trybuild = "1"
 
 [workspace.lints.rust]
-unsafe_code = "warn"
+unsafe_code = "forbid"
 missing_docs = "warn"
-rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [workspace.lints.clippy]
-# Lint groups
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 
@@ -48,18 +48,6 @@ let_underscore_must_use = "warn"
 unused_result_ok = "warn"
 map_err_ignore = "warn"
 assertions_on_result_states = "warn"
-
-# Async safety
-await_holding_lock = "warn"
-await_holding_refcell_ref = "warn"
-large_futures = "warn"
-
-# Unsafe memory
-mem_forget = "warn"
-undocumented_unsafe_blocks = "warn"
-multiple_unsafe_ops_per_block = "warn"
-unnecessary_safety_doc = "warn"
-unnecessary_safety_comment = "warn"
 
 # Numeric correctness
 float_cmp = "warn"
@@ -102,9 +90,6 @@ wildcard_dependencies = "warn"
 
 # API design
 must_use_candidate = "warn"
-missing_errors_doc = "warn"
-missing_panics_doc = "warn"
-missing_safety_doc = "warn"
 missing_const_for_fn = "warn"
 redundant_pub_crate = "warn"
 module_name_repetitions = "warn"
@@ -132,6 +117,11 @@ clone_on_ref_ptr = "warn"
 rc_buffer = "warn"
 verbose_file_reads = "warn"
 iter_over_hash_type = "warn"
+
+# Every comment is one line, so the sectioned doc lints cannot apply
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+missing_safety_doc = "allow"
 
 # Allowed (conflict or too noisy)
 blanket_clippy_restriction_lints = "allow"

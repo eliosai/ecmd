@@ -1,13 +1,7 @@
 //! Parsing style controlling which CLI convention layers are active.
 
-/// Controls which argument parsing conventions are applied.
-///
-/// Each style is additive — GNU includes POSIX, Modern includes GNU.
+/// The argument conventions a command accepts, each style adding to the one before
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 #[non_exhaustive]
 pub enum Style {
     /// POSIX only: `-x` flags, strict option-before-operand ordering.
@@ -17,16 +11,13 @@ pub enum Style {
     Gnu,
 }
 
-/// Controls which help dialect [`crate::meta::CommandDef::help`] renders.
-///
-/// Independent of [`Style`]: commands sharing a parsing convention may answer
-/// to references that print help in different shapes.
+/// The help dialect a command renders, independent of its parsing style
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 #[non_exhaustive]
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "the style module owns both styles"
+)]
 pub enum HelpStyle {
     /// `name: usage` with an indented body, as bash prints its builtins.
     #[default]

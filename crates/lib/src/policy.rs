@@ -4,10 +4,6 @@ use crate::meta::{Owned, Static, Storage};
 
 /// How a valued flag behaves when no value is attached
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 #[non_exhaustive]
 pub enum ValueMode {
     /// Use the default and leave the next argument untouched
@@ -40,7 +36,9 @@ pub struct ValueRule<S: Storage = Static> {
 }
 
 impl ValueRule<Static> {
-    pub(crate) fn into_owned(self) -> ValueRule<Owned> {
+    /// Copy every borrowed field into owned storage
+    #[must_use]
+    pub fn into_owned(self) -> ValueRule<Owned> {
         ValueRule {
             ch: self.ch,
             mode: self.mode,
@@ -53,7 +51,8 @@ impl ValueRule<Static> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize),
+    rkyv(attr(non_exhaustive))
 )]
 #[expect(
     clippy::exhaustive_structs,
@@ -70,7 +69,8 @@ pub struct NumericOperandRule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize),
+    rkyv(attr(non_exhaustive))
 )]
 #[expect(
     clippy::exhaustive_structs,

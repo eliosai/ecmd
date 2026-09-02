@@ -1,16 +1,8 @@
-//! Remaining positional arguments after flags and named positionals.
-//!
-//! Use `Operands` as a field type — the derive macro recognizes it
-//! and generates "consume remaining args" code automatically.
+//! Positional arguments left after flags
 
 use std::ops::Deref;
 
-/// All positional arguments remaining after flag parsing completes.
-///
-/// Derefs to `[String]` for slice access. Use as a struct field
-/// with no attribute — the type itself signals "rest of args."
-///
-/// `Hash` is not derived because `Vec<String>` does not implement it.
+/// Positional arguments left after flag parsing, dereferencing to a string slice
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Operands {
     items: Vec<String>,
@@ -31,13 +23,13 @@ impl Operands {
 
     /// Number of operands.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.items.len()
     }
 
     /// Whether no operands were provided.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 

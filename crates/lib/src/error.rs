@@ -1,5 +1,4 @@
-//! Parse errors produced when command-line arguments don't match
-//! the declared command structure.
+//! Errors a scan or a parse returns
 
 use std::fmt;
 

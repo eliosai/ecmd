@@ -1,7 +1,10 @@
 //! rkyv adapters for owned command metadata
 
-use rkyv::with::Map;
-use rkyv::{Archive, Deserialize, Serialize};
+use core::fmt;
+
+use rkyv::rancor::{Fallible, Source};
+use rkyv::with::{ArchiveWith, DeserializeWith, Map, SerializeWith};
+use rkyv::{Archive, Deserialize, Place, Serialize};
 
 use crate::meta::{CommandDef, Owned, PositionalDef};
 use crate::parse::FlagDef;
@@ -9,13 +12,97 @@ use crate::parse::{FlagKind, OnUnknown};
 use crate::policy::{ExclusiveRule, NumericOperandRule, ValueMode, ValueRule};
 use crate::style::{HelpStyle, Style};
 
+/// A fieldless enum stored as one byte
+trait Coded: Sized {
+    fn code(&self) -> u8;
+    fn from_code(code: u8) -> Option<Self>;
+}
+
+/// Archives a fieldless enum as its byte code
+#[doc(hidden)]
+#[non_exhaustive]
+pub struct Code;
+
+impl<T: Coded> ArchiveWith<T> for Code {
+    type Archived = u8;
+    type Resolver = ();
+
+    fn resolve_with(field: &T, (): (), out: Place<u8>) {
+        field.code().resolve((), out);
+    }
+}
+
+impl<T: Coded, S: Fallible + ?Sized> SerializeWith<T, S> for Code {
+    fn serialize_with(_: &T, _: &mut S) -> Result<(), S::Error> {
+        Ok(())
+    }
+}
+
+impl<T: Coded, D: Fallible + ?Sized> DeserializeWith<u8, T, D> for Code
+where
+    D::Error: Source,
+{
+    fn deserialize_with(field: &u8, _: &mut D) -> Result<T, D::Error> {
+        T::from_code(*field).ok_or_else(|| D::Error::new(UnknownCode(*field)))
+    }
+}
+
+/// A byte that names no variant of the enum it was read into
+#[derive(Debug)]
+struct UnknownCode(u8);
+
+impl fmt::Display for UnknownCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown enum code {}", self.0)
+    }
+}
+
+impl core::error::Error for UnknownCode {}
+
+macro_rules! coded {
+    ($ty:ty { $($variant:ident = $code:literal),+ $(,)? }) => {
+        impl Coded for $ty {
+            fn code(&self) -> u8 {
+                match self {
+                    $(Self::$variant => $code,)+
+                }
+            }
+
+            fn from_code(code: u8) -> Option<Self> {
+                match code {
+                    $($code => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+coded!(Style { Posix = 0, Gnu = 1 });
+coded!(HelpStyle { Bash = 0, Gnu = 1, Clap = 2, ClapWide = 3, UtilLinux = 4 });
+coded!(OnUnknown { Reject = 0, PassThrough = 1 });
+coded!(FlagKind { Bool = 0, Value = 1, Polar = 2, PolarValue = 3, Noop = 4 });
+coded!(ValueMode {
+    AttachedOrDefault = 0,
+    NextOrDefault = 1,
+    NumericNextOrDefault = 2,
+    OptionalNumericNextOrDefault = 3,
+    ExactShortDefault = 4,
+    AnyNextOrDefault = 5,
+});
+
 /// Archive adapter for an owned flag definition
 #[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = FlagDef<Owned>)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "mirrors the definition it archives"
+)]
 pub struct FlagDefDef {
     ch: char,
     long: String,
     aliases: Vec<String>,
+    #[rkyv(with = Code)]
     kind: FlagKind,
     clears: Vec<char>,
     desc: String,
@@ -72,6 +159,7 @@ pub struct PositionalDefDef {
 #[rkyv(remote = ValueRule<Owned>)]
 pub struct ValueRuleDef {
     ch: char,
+    #[rkyv(with = Code)]
     mode: ValueMode,
     default: String,
 }
@@ -103,12 +191,19 @@ impl From<PositionalDefDef> for PositionalDef<Owned> {
 /// Archive adapter for an owned command definition
 #[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = CommandDef<Owned>)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "mirrors the definition it archives"
+)]
 pub struct CommandDefDef {
     name: String,
     about: String,
     short_doc: String,
+    #[rkyv(with = Code)]
     style: Style,
+    #[rkyv(with = Code)]
     help_style: HelpStyle,
+    #[rkyv(with = Code)]
     on_unknown: OnUnknown,
     permute: bool,
     #[rkyv(with = Map<FlagDefDef>)]
@@ -173,6 +268,7 @@ impl From<CommandDefDef> for CommandDef<Owned> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, clippy::indexing_slicing, reason = "tests")]
 mod tests {
     use rkyv::with::With;
 

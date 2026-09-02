@@ -1,7 +1,4 @@
-//! POSIX-style argument parser.
-//!
-//! Handles: flag bundling (`-abc`), stuck values (`-oval`),
-//! separated values (`-o val`), `--` terminator, and `+` polarity.
+//! POSIX and GNU argument scanning
 
 use crate::error::Error;
 use crate::meta::{CommandDef, Owned, Static, Storage};
@@ -13,10 +10,6 @@ use crate::style::Style;
 
 /// How to handle unrecognized flag characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 #[expect(clippy::exhaustive_enums, reason = "two-state behavioral switch")]
 pub enum OnUnknown {
     /// Return an error (standard POSIX behavior).
@@ -28,10 +21,6 @@ pub enum OnUnknown {
 
 /// Classification of a declared flag for the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 #[non_exhaustive]
 pub enum FlagKind {
     /// Boolean toggle — presence means true.
@@ -111,7 +100,9 @@ impl FlagDef<Static> {
 }
 
 impl FlagDef<Static> {
-    pub(crate) fn into_owned(self) -> FlagDef<Owned> {
+    /// Copy every borrowed field into owned storage
+    #[must_use]
+    pub fn into_owned(self) -> FlagDef<Owned> {
         FlagDef {
             ch: self.ch,
             long: self.long.to_owned(),
@@ -177,12 +168,7 @@ pub struct ScanResult {
 
 // ── Main entry point ────────────────────────────────────────────
 
-/// Parse arguments according to declared flags.
-///
-/// # Errors
-///
-/// Returns an error if an unknown flag is encountered (when
-/// `on_unknown` is `Reject`) or a valued flag is missing its argument.
+/// Scan arguments against declared flags
 pub fn scan<S: Storage>(
     args: &[&str],
     flags: &[FlagDef<S>],
@@ -200,12 +186,9 @@ pub fn scan<S: Storage>(
     )
 }
 
-/// Parse arguments with command-specific value and numeric policies.
-///
-/// # Errors
-///
-/// Returns an error if the invocation violates the declared command shape.
-pub(crate) fn scan_with_policy<S: Storage, P: Storage>(
+/// Scan arguments with command-specific value and numeric policies
+#[doc(hidden)]
+pub fn scan_with_policy<S: Storage, P: Storage>(
     args: &[&str],
     flags: &[FlagDef<S>],
     policy: Policy<'_, P>,
@@ -258,8 +241,7 @@ pub(crate) fn scan_with_policy<S: Storage, P: Storage>(
                     break;
                 }
             }
-            // GNU permutation: an operand does not stop option scanning. With
-            // `permute` off (POSIX order, e.g. `basename`), the first operand does.
+            // GNU permutation lets operands pass, and with permute off the first operand ends scanning
             ArgClass::Operand if gnu && permute => {
                 result.operands.push(arg.to_owned());
                 cursor.advance();
@@ -293,7 +275,8 @@ fn pass_unknown_long(
     }
 }
 
-pub(crate) struct Policy<'a, S: Storage> {
+#[doc(hidden)]
+pub struct Policy<'a, S: Storage> {
     value_rules: &'a [ValueRule<S>],
     numeric_operands: &'a [NumericOperandRule],
     first_numeric_value: Option<char>,
@@ -318,7 +301,8 @@ impl<S: Storage> Policy<'_, S> {
         exclusive_groups: &[],
     };
 
-    pub(crate) fn from_definition(definition: &CommandDef<S>) -> Policy<'_, S> {
+    #[doc(hidden)]
+    pub fn from_definition(definition: &CommandDef<S>) -> Policy<'_, S> {
         Policy {
             value_rules: definition.value_rules.as_ref(),
             numeric_operands: definition.numeric_operands.as_ref(),
@@ -1187,7 +1171,11 @@ fn infer_long<'a, S: Storage>(name: &str, flags: &'a [FlagDef<S>]) -> LongMatch<
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "tests verify success paths")]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "tests verify success paths"
+)]
 mod tests {
     use pretty_assertions::assert_eq;
 
@@ -1991,8 +1979,7 @@ mod tests {
 
     #[test]
     fn gnu_no_permute_stops_at_first_operand() {
-        // With permute=false (POSIX order, e.g. basename), the first operand
-        // ends option scanning; later `-z`/`--zero` become operands.
+        // with permute off the first operand ends option scanning, so later flags are operands
         let flags = [long_bool('z', "zero")];
         let r = scan(
             &["foo", "-z", "--zero"],
@@ -2069,8 +2056,7 @@ mod tests {
 
     #[test]
     fn gnu_alias_and_long_prefix_counts_flag_once() {
-        // "--qu" matches the long "quiet"; the flag must not register as ambiguous
-        // just because it also owns the "silent" alias.
+        // the long "quiet" owns the "silent" alias, so "--qu" must not read as ambiguous
         let flags = [aliased_bool('q', "quiet", &["silent"])];
         let r = scan(&["--qu"], &flags, OnUnknown::Reject, Style::Gnu, true).unwrap();
         assert_eq!(r.flags, [Parsed::Bool('q')]);

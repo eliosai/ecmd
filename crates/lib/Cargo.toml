@@ -2,15 +2,18 @@
 name = "ecmd"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-rust-version.workspace = true
-description = "Type-driven command-line argument parsing"
-readme = "README.md"
+description = "Type-driven POSIX and GNU argument parsing"
+readme = "../../README.md"
 keywords = ["cli", "argument", "parser", "posix", "flags"]
 categories = ["command-line-interface"]
-include = ["src/**/*", "Cargo.toml", "LICENSE", "README.md"]
+include = ["src/**/*.rs", "Cargo.toml", "../../LICENSE", "../../README.md"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 ecmd-derive = { workspace = true, optional = true }
@@ -18,11 +21,11 @@ rkyv = { workspace = true, optional = true }
 
 [features]
 default = ["derive"]
-derive = ["ecmd-derive"]
+derive = ["dep:ecmd-derive"]
 rkyv = ["dep:rkyv"]
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
+pretty_assertions.workspace = true
 
 [lints]
 workspace = true

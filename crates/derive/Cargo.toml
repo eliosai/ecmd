@@ -2,18 +2,23 @@
 name = "ecmd-derive"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
-description = "Derive macro for ecmd argument parser"
 license.workspace = true
 repository.workspace = true
+description = "Derive macro for the ecmd argument parser"
+readme = "../../README.md"
+keywords = ["cli", "argument", "parser", "derive"]
+categories = ["command-line-interface"]
+include = ["src/**/*.rs", "Cargo.toml", "../../LICENSE", "../../README.md"]
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
-quote = "1"
-proc-macro2 = "1"
+syn.workspace = true
+quote.workspace = true
+proc-macro2.workspace = true
 
 [lints]
 workspace = true
