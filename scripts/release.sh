@@ -24,7 +24,7 @@ bump_kind() {
     subjects=$(git log --format=%s "$last_tag..HEAD")
     if grep -qE '^[a-z]+(\([^)]*\))?!:' <<<"$subjects"; then
         echo major
-    elif ! cargo semver-checks --workspace --all-features --baseline-rev "$last_tag" >/dev/null 2>&1; then
+    elif ! bash scripts/semver-check.sh "$last_tag" >/dev/null 2>&1; then
         echo major
     elif grep -qE '^feat(\([^)]*\))?:' <<<"$subjects"; then
         echo minor
