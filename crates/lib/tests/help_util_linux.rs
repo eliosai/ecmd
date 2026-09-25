@@ -116,3 +116,16 @@ fn util_linux_help_drops_the_trailer_when_the_reference_has_none() {
     assert!(!help.contains("For more details"));
     assert!(help.ends_with("output version information and exit\n"));
 }
+
+// Reproduces the operands of util-linux `look --help`
+#[test]
+fn util_linux_usage_angles_operands() {
+    let def = Def::builder("look")
+        .style(Style::Gnu)
+        .help_style(HelpStyle::UtilLinux)
+        .positional(Positional::new("string").required())
+        .rest(Positional::new("file"))
+        .build();
+
+    assert_eq!(def.usage(), "look <string> [<file>...]");
+}
