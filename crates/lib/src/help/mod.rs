@@ -7,6 +7,7 @@ use crate::style::HelpStyle;
 mod bash;
 mod clap;
 mod gnu;
+mod operand;
 mod util_linux;
 
 const INDENT: &str = "    ";
@@ -17,15 +18,12 @@ impl Def {
     pub fn usage(&self) -> String {
         let mut parts = vec![self.name().to_owned()];
         parts.extend(flag_usage(self));
-        for positional in self.positionals() {
-            parts.push(if positional.is_required() {
-                positional.name().to_owned()
-            } else {
-                format!("[{}]", positional.name())
-            });
+        let style = self.help_style();
+        for positional in self.positionals().iter().filter(|p| !p.is_hidden()) {
+            parts.push(operand::usage(style, positional, positional.is_spread()));
         }
-        if self.rest().is_some() {
-            parts.push("[args...]".to_owned());
+        if let Some(rest) = self.rest().filter(|rest| !rest.is_hidden()) {
+            parts.push(operand::usage(style, rest, true));
         }
         parts.join(" ")
     }

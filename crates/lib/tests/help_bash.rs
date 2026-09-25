@@ -1,6 +1,6 @@
 //! The bash builtin help dialect against real `help` output
 
-use ecmd::Flag;
+use ecmd::{Def, Flag, Positional};
 mod fixtures;
 
 use fixtures::{alias_flags, make_def};
@@ -261,4 +261,23 @@ fn posix_help_stays_bash_formatted() {
     let help = def.help();
     assert!(help.starts_with("exit: exit [n]\n"));
     assert!(!help.contains("Usage:"));
+}
+
+// Reproduces bash's `help unalias` synopsis
+#[test]
+fn bash_usage_repeats_a_required_rest_operand() {
+    let def = Def::builder("unalias")
+        .flag(Flag::new('a').desc("remove all alias definitions"))
+        .rest(Positional::new("name").required())
+        .build();
+
+    assert_eq!(def.usage(), "unalias [-a] name [name ...]");
+}
+
+// Reproduces bash's `help eval` synopsis
+#[test]
+fn bash_usage_brackets_an_optional_rest_operand() {
+    let def = Def::builder("eval").rest(Positional::new("arg")).build();
+
+    assert_eq!(def.usage(), "eval [arg ...]");
 }
