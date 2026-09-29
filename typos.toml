@@ -1,0 +1,11 @@
+# House vocabulary and the deliberate fragments the tests feed the scanner
+[files]
+extend-exclude = [ "CHANGELOG.md", ".agents/skills/" ]
+
+[default]
+# `lits` is the parsed `syn::LitStr` list, which the checker reads as a misspelling of `list`
+extend-ignore-identifiers-re = [ "lits" ]
+
+[default.extend-words]
+# A truncated flag the gnu prefix test feeds the scanner on purpose
+hel = "hel"

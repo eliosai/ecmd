@@ -8,9 +8,9 @@ license.workspace = true
 repository.workspace = true
 description = "Type-driven POSIX and GNU argument parsing"
 readme = "README.md"
-keywords = ["cli", "argument", "parser", "posix", "flags"]
-categories = ["command-line-interface"]
-include = ["src/**/*.rs", "Cargo.toml", "LICENSE", "README.md"]
+keywords = [ "cli", "argument", "parser", "posix", "flags" ]
+categories = [ "command-line-interface" ]
+include = [ "src/**/*.rs", "Cargo.toml", "LICENSE", "README.md" ]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -20,9 +20,9 @@ ecmd-derive = { workspace = true, optional = true }
 rkyv = { workspace = true, optional = true }
 
 [features]
-default = ["derive"]
-derive = ["dep:ecmd-derive"]
-rkyv = ["dep:rkyv"]
+default = [ "derive" ]
+derive = [ "dep:ecmd-derive" ]
+rkyv = [ "dep:rkyv" ]
 
 [dev-dependencies]
 pretty_assertions.workspace = true
