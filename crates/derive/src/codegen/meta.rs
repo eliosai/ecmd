@@ -97,7 +97,7 @@ pub fn gen_rest(fields: &[ClassifiedField<'_>]) -> (TokenStream, TokenStream) {
     let Some(cf) = fields.iter().find(|cf| matches!(cf.role, FieldRole::Rest)) else {
         return (TokenStream::new(), quote! { None });
     };
-    let name = cf.ident.to_string();
+    let name = operand_name(cf.ident);
     let desc = &cf.desc;
     let label = &cf.operand.label;
     let default_value = &cf.operand.default_value;
@@ -226,6 +226,11 @@ pub fn flag_long(cf: &ClassifiedField<'_>, cmd: &CommandAttrs) -> String {
     String::new()
 }
 
+/// The operand name a field ident shows in help and errors, without a leading underscore
+pub fn operand_name(ident: &Ident) -> String {
+    ident.to_string().trim_start_matches('_').to_owned()
+}
+
 /// Convert a field ident to a kebab-case long name (`nchars_exact` → "nchars-exact").
 pub fn kebab(ident: &Ident) -> String {
     ident.to_string().trim_matches('_').replace('_', "-")
@@ -264,7 +269,7 @@ pub fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
                 FieldRole::OptionalPositional => false,
                 _ => return None,
             };
-            let name = cf.ident.to_string();
+            let name = operand_name(cf.ident);
             let desc = &cf.desc;
             let label = &cf.operand.label;
             let default_value = &cf.operand.default_value;

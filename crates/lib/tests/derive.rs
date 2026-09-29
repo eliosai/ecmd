@@ -1736,3 +1736,20 @@ fn rest_required_rejects_an_empty_rest_slot() {
     assert_eq!(&*RestRequired::parse(&["a"]).unwrap().files, &["a"]);
     assert!(RestRequired::def().rest().unwrap().is_required());
 }
+
+/// Discard the operands.
+#[derive(Command)]
+#[command(name = "colon")]
+struct Colon {
+    _target: String,
+    _args: Operands,
+}
+
+#[test]
+fn operand_names_drop_the_leading_underscore() {
+    assert_eq!(Colon::def().usage(), "colon target [args ...]");
+    assert_eq!(
+        Colon::parse(&[]).err(),
+        Some(ecmd::Error::MissingRequired(vec!["target".to_owned()]))
+    );
+}

@@ -54,7 +54,8 @@ A flag needs `short` or `long`. A long-only flag takes a synthetic identity abov
 
 A positional is required when its type is `String` and optional when it is `Option<String>`, so
 `required` on a positional and `default` on a required positional are compile errors, and so is
-`#[operand]` on a flag field.
+`#[operand]` on a flag field. An operand takes its field name without a leading underscore, so
+`_args` shows and errors as `args`.
 
 ## The doc comment
 
