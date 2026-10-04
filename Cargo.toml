@@ -14,7 +14,7 @@ repository = "https://github.com/eliosai/ecmd"
 ecmd-derive = { version = "1.0.0", path = "crates/derive" }
 thiserror = "2.0"
 rkyv = { version = "0.8.16", default-features = false, features = [ "std", "bytecheck" ] }
-syn = { version = "2", features = [ "full", "extra-traits" ] }
+syn = { version = "3", features = [ "full", "extra-traits" ] }
 quote = "1"
 proc-macro2 = "1"
 pretty_assertions = "1"
