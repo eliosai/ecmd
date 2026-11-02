@@ -7,7 +7,7 @@ pull request changes `main`.
 
 1. Branch `release/vX.Y.Z` from `main` and run `git fetch --tags`; `just release` needs git-cliff.
 2. Run `just release X.Y.Z`. It writes the version into `[workspace.package]` and the
-   `ecmd-derive` dependency, refreshes the workspace entries in `Cargo.lock` and writes
+   exact `ecmd-derive` pin, refreshes the workspace entries in `Cargo.lock` and writes
    `CHANGELOG.md` with git-cliff from `cliff.toml`.
 3. Commit `chore: release vX.Y.Z` and open the pull request. Keep that commit last: the merge
    publishes and tags the commit which set the version.
