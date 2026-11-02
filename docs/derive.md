@@ -1,7 +1,8 @@
 # The derive
 
 `#[derive(Command)]` reads a struct, its doc comment and its attributes, and writes `def()`,
-which builds one static `Def` on its first call, and `parse()`, which scans and fills the fields. Field types
+which builds one static `Def` on its first call, `name()`, which returns the declared name
+without building it, and `parse()`, which scans and fills the fields. Field types
 name the shape (`README.md` has the table), and the attributes below refine it.
 
 ## `#[command(...)]`
