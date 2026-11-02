@@ -20,7 +20,7 @@ pub fn cell(name: &Ident, ty: &TokenStream, value: &TokenStream) -> (TokenStream
     (item, borrow)
 }
 
-/// A once-built array of `element` holding `values`, or a bare empty slice when there are none
+/// A once-built heap slice of `element` holding `values`, or a bare empty slice when there are none
 pub fn array_cell(
     name: &Ident,
     element: &TokenStream,
@@ -29,12 +29,12 @@ pub fn array_cell(
     if values.is_empty() {
         return (TokenStream::new(), quote! { &[] });
     }
-    let count = values.len();
-    cell(
+    let (item, borrow) = cell(
         name,
-        &quote! { [#element; #count] },
-        &quote! { [#(#values),*] },
-    )
+        &quote! { ::std::boxed::Box<[#element]> },
+        &quote! { ::std::vec![#(#values),*].into_boxed_slice() },
+    );
+    (item, quote! { &**#borrow })
 }
 
 /// A once-built array of borrowed text lines, or a bare empty slice when there are none
