@@ -1,7 +1,7 @@
 # The public API
 
 Every public item lives at the crate root. `#[doc(hidden)] pub mod __private` carries what the
-derive writes into statics and is not part of this contract. cargo-semver-checks compares each
+derive writes into its definition and is not part of this contract. cargo-semver-checks compares each
 release against the one before it, and a breaking change bumps the major.
 
 ## `Command`

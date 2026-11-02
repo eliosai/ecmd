@@ -49,6 +49,13 @@ fn cd_physical_flag() {
 }
 
 #[test]
+fn derived_definition_is_one_static() {
+    let first = std::thread::spawn(|| std::ptr::from_ref(Cd::def()).addr());
+    let second = std::ptr::from_ref(Cd::def()).addr();
+    assert_eq!(first.join().unwrap(), second);
+}
+
+#[test]
 fn cd_last_wins_mutex() {
     let cmd = Cd::parse(&["-L", "-P"]).unwrap();
     assert!(cmd.physical);
