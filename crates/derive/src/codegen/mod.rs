@@ -4,6 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, Ident};
 
+mod cell;
 mod meta;
 mod parse;
 mod policy;
