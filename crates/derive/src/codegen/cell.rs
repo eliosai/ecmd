@@ -11,6 +11,7 @@ pub fn cell(name: &Ident, ty: &TokenStream, value: &TokenStream) -> (TokenStream
     };
     let borrow = quote! {
         #name.get_or_init({
+            #[allow(clippy::large_stack_arrays)]
             fn init() -> #ty {
                 #value
             }
@@ -20,7 +21,7 @@ pub fn cell(name: &Ident, ty: &TokenStream, value: &TokenStream) -> (TokenStream
     (item, borrow)
 }
 
-/// A once-built heap slice of `element` holding `values`, or a bare empty slice when there are none
+/// A once-built array of `element` holding `values`, or a bare empty slice when there are none
 pub fn array_cell(
     name: &Ident,
     element: &TokenStream,
@@ -29,12 +30,12 @@ pub fn array_cell(
     if values.is_empty() {
         return (TokenStream::new(), quote! { &[] });
     }
-    let (item, borrow) = cell(
+    let count = values.len();
+    cell(
         name,
-        &quote! { ::std::boxed::Box<[#element]> },
-        &quote! { ::std::vec![#(#values),*].into_boxed_slice() },
-    );
-    (item, quote! { &**#borrow })
+        &quote! { [#element; #count] },
+        &quote! { [#(#values),*] },
+    )
 }
 
 /// A once-built array of borrowed text lines, or a bare empty slice when there are none
