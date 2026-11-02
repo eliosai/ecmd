@@ -1,11 +1,12 @@
-//! The `POLICY` static from the `tag(...)` keys
+//! The policy cell from the `tag(...)` keys
 
 use std::collections::HashSet;
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
-use super::meta::kebab;
+use super::cell::{array_cell, cell};
+use super::meta::{ident, kebab};
 use super::{ClassifiedField, flag_attrs};
 use crate::attrs::CommandAttrs;
 use crate::classify::FieldRole;
@@ -16,7 +17,10 @@ pub struct ValuePolicyLiteral {
     default: String,
 }
 
-pub fn gen_policy(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> syn::Result<TokenStream> {
+pub fn gen_policy(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+) -> syn::Result<(TokenStream, TokenStream)> {
     let mut values = Vec::new();
     let mut numeric_operands = Vec::new();
     let mut first_numeric = None;
@@ -240,26 +244,48 @@ pub struct PolicySpec<'a> {
     exclusive_groups: &'a [(char, u16)],
 }
 
-/// The `POLICY` static and the rule arrays it borrows
-pub fn policy_literal(spec: &PolicySpec<'_>) -> TokenStream {
-    let value_rules = spec.values.iter().map(|rule| {
-        let ch = rule.ch;
-        let mode = &rule.mode;
-        let default = &rule.default;
-        quote! { ::ecmd::__private::ValueRule { ch: #ch, mode: #mode, default: ::std::borrow::Cow::Borrowed(#default) } }
-    });
-    let value_count = spec.values.len();
-    let numeric_rules = spec.numeric_operands.iter().map(|(ch, prefix)| {
-        quote! { ::ecmd::__private::NumericRule { ch: #ch, prefix: #prefix } }
-    });
-    let numeric_count = spec.numeric_operands.len();
+/// The policy cell with the value rule cell it borrows, and the expression that borrows the policy
+pub fn policy_literal(spec: &PolicySpec<'_>) -> (TokenStream, TokenStream) {
+    if spec.is_standard() {
+        return (
+            TokenStream::new(),
+            quote! { &::ecmd::__private::Policy::STANDARD },
+        );
+    }
+    let value_rules: Vec<_> = spec.values.iter().map(value_rule_literal).collect();
+    let (value_item, value_rules) = array_cell(
+        &ident("VALUE_RULES"),
+        &quote! { ::ecmd::__private::ValueRule },
+        &value_rules,
+    );
+    let fields = policy_fields(spec);
+    let (policy_item, policy) = cell(
+        &ident("POLICY"),
+        &quote! { ::ecmd::__private::Policy },
+        &quote! {
+            ::ecmd::__private::Policy {
+                value_rules: ::std::borrow::Cow::Borrowed(#value_rules),
+                #fields
+            }
+        },
+    );
+    (quote! { #value_item #policy_item }, policy)
+}
+
+/// One value rule literal
+fn value_rule_literal(rule: &ValuePolicyLiteral) -> TokenStream {
+    let ch = rule.ch;
+    let mode = &rule.mode;
+    let default = &rule.default;
+    quote! { ::ecmd::__private::ValueRule { ch: #ch, mode: #mode, default: ::std::borrow::Cow::Borrowed(#default) } }
+}
+
+/// Every policy field past the value rules, each array a relocation-free constant
+fn policy_fields(spec: &PolicySpec<'_>) -> TokenStream {
+    let (numeric_rules, exclusive_rules) = rule_literals(spec);
     let first = spec
         .first_numeric
         .map_or_else(|| quote! { None }, |ch| quote! { Some(#ch) });
-    let exclusive_rules = spec.exclusive_groups.iter().map(|(ch, group)| {
-        quote! { ::ecmd::__private::ExclusiveRule { ch: #ch, group: #group } }
-    });
-    let exclusive_count = spec.exclusive_groups.len();
     let exact_long = spec.exact_long;
     let no_implicit_version = spec.no_implicit_version;
     let equals_only = identities_literal(spec.equals_only);
@@ -267,21 +293,42 @@ pub fn policy_literal(spec: &PolicySpec<'_>) -> TokenStream {
     let separated_values = identities_literal(spec.separated_values);
     let prefixed_values = identities_literal(spec.prefixed_values);
     quote! {
-        static VALUE_RULES: [::ecmd::__private::ValueRule; #value_count] = [#(#value_rules),*];
-        static NUMERIC_RULES: [::ecmd::__private::NumericRule; #numeric_count] = [#(#numeric_rules),*];
-        static EXCLUSIVE_RULES: [::ecmd::__private::ExclusiveRule; #exclusive_count] = [#(#exclusive_rules),*];
-        static POLICY: ::ecmd::__private::Policy = ::ecmd::__private::Policy {
-            value_rules: ::std::borrow::Cow::Borrowed(&VALUE_RULES),
-            numeric_operands: ::std::borrow::Cow::Borrowed(&NUMERIC_RULES),
-            first_numeric_value: #first,
-            exact_long: #exact_long,
-            no_implicit_version: #no_implicit_version,
-            equals_only: ::std::borrow::Cow::Borrowed(#equals_only),
-            attached_values: ::std::borrow::Cow::Borrowed(#attached_values),
-            separated_values: ::std::borrow::Cow::Borrowed(#separated_values),
-            prefixed_values: ::std::borrow::Cow::Borrowed(#prefixed_values),
-            exclusive_groups: ::std::borrow::Cow::Borrowed(&EXCLUSIVE_RULES),
-        };
+        numeric_operands: ::std::borrow::Cow::Borrowed(&[#numeric_rules]),
+        first_numeric_value: #first,
+        exact_long: #exact_long,
+        no_implicit_version: #no_implicit_version,
+        equals_only: ::std::borrow::Cow::Borrowed(#equals_only),
+        attached_values: ::std::borrow::Cow::Borrowed(#attached_values),
+        separated_values: ::std::borrow::Cow::Borrowed(#separated_values),
+        prefixed_values: ::std::borrow::Cow::Borrowed(#prefixed_values),
+        exclusive_groups: ::std::borrow::Cow::Borrowed(&[#exclusive_rules]),
+    }
+}
+
+/// The numeric operand and exclusive group rule literals, each list comma separated
+fn rule_literals(spec: &PolicySpec<'_>) -> (TokenStream, TokenStream) {
+    let numeric = spec.numeric_operands.iter().map(|(ch, prefix)| {
+        quote! { ::ecmd::__private::NumericRule { ch: #ch, prefix: #prefix } }
+    });
+    let exclusive = spec.exclusive_groups.iter().map(|(ch, group)| {
+        quote! { ::ecmd::__private::ExclusiveRule { ch: #ch, group: #group } }
+    });
+    (quote! { #(#numeric),* }, quote! { #(#exclusive),* })
+}
+
+impl PolicySpec<'_> {
+    /// Whether this policy adds nothing to the standard one
+    const fn is_standard(&self) -> bool {
+        self.values.is_empty()
+            && self.numeric_operands.is_empty()
+            && self.first_numeric.is_none()
+            && !self.exact_long
+            && !self.no_implicit_version
+            && self.equals_only.is_empty()
+            && self.attached_values.is_empty()
+            && self.separated_values.is_empty()
+            && self.prefixed_values.is_empty()
+            && self.exclusive_groups.is_empty()
     }
 }
 

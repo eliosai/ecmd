@@ -49,6 +49,13 @@ fn cd_physical_flag() {
 }
 
 #[test]
+fn derived_definition_is_one_static() {
+    let first = std::thread::spawn(|| std::ptr::from_ref(Cd::def()).addr());
+    let second = std::ptr::from_ref(Cd::def()).addr();
+    assert_eq!(first.join().unwrap(), second);
+}
+
+#[test]
 fn cd_last_wins_mutex() {
     let cmd = Cd::parse(&["-L", "-P"]).unwrap();
     assert!(cmd.physical);
@@ -1735,4 +1742,40 @@ fn rest_required_rejects_an_empty_rest_slot() {
     );
     assert_eq!(&*RestRequired::parse(&["a"]).unwrap().files, &["a"]);
     assert!(RestRequired::def().rest().unwrap().is_required());
+}
+
+// ── Command name ────────────────────────────────────────────
+
+#[test]
+fn derived_name_matches_the_definition_name() {
+    assert_eq!(Cd::name(), Cd::def().name());
+    assert_eq!(GnuLenient::name(), GnuLenient::def().name());
+    assert_eq!(NoopMetadata::name(), NoopMetadata::def().name());
+    assert_eq!(BashCd::name(), BashCd::def().name());
+}
+
+#[test]
+fn derived_name_is_the_declared_name_not_the_type_name() {
+    assert_eq!(GnuLenient::name(), "gnu-lenient");
+    assert_eq!(NoopMetadata::name(), "noop_meta");
+    assert_eq!(BashCd::name(), "cd2");
+}
+
+struct HandWritten;
+
+impl CommandTrait for HandWritten {
+    fn def() -> &'static ecmd::Def {
+        static DEF: std::sync::LazyLock<ecmd::Def> =
+            std::sync::LazyLock::new(|| ecmd::Def::builder("hand-written").build());
+        &DEF
+    }
+
+    fn parse(_args: &[&str]) -> Result<Self, ecmd::Error> {
+        Ok(Self)
+    }
+}
+
+#[test]
+fn hand_written_command_names_itself_from_its_definition() {
+    assert_eq!(HandWritten::name(), "hand-written");
 }

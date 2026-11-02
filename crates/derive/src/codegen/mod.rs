@@ -4,6 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, Ident};
 
+mod cell;
 mod meta;
 mod parse;
 mod policy;
@@ -43,11 +44,16 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let policy = gen_policy(&cmd, &fields)?;
     let meta_body = gen_meta(&cmd, &sections, &fields, &policy);
     let parse_body = gen_parse(&fields);
+    let command_name = &cmd.name;
 
     Ok(quote! {
         impl ::ecmd::Command for #name {
             fn def() -> &'static ::ecmd::Def {
                 #meta_body
+            }
+
+            fn name() -> &'static str {
+                #command_name
             }
 
             fn parse(args: &[&str]) -> ::core::result::Result<Self, ::ecmd::Error> {

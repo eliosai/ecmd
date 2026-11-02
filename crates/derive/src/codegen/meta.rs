@@ -1,20 +1,42 @@
-//! The statics one definition is built from
+//! The cells one definition is built from
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::Ident;
 
+use super::cell::{array_cell, cell, texts_cell};
 use super::{ClassifiedField, flag_attrs, flag_def_tokens, flag_value_name};
 use crate::attrs::{CommandAttrs, RepeatAttr};
 use crate::classify::FieldRole;
 
-/// The statics one definition is built from, ending in a borrow of the definition itself
+/// The once-built definition and every cell it borrows, ending in a borrow of the definition
 pub fn gen_meta(
     cmd: &CommandAttrs,
     sections: &crate::attrs::DocSections,
     fields: &[ClassifiedField<'_>],
-    policy: &TokenStream,
+    policy: &(TokenStream, TokenStream),
 ) -> TokenStream {
+    let (flag_items, flags) = gen_flag_metas(cmd, fields);
+    let (positional_items, positionals) = gen_positional_metas(fields);
+    let (rest_item, rest) = gen_rest(fields);
+    let (policy_items, policy) = policy;
+    let (tag_items, tags) = gen_tags(cmd);
+    let (text_items, texts) = gen_texts(cmd, sections);
+    let raw = raw_def(cmd, sections);
+    let body = quote! {
+        #flag_items #positional_items #rest_item #policy_items #tag_items #text_items
+        ::ecmd::Def::from_raw(::ecmd::__private::RawDef {
+            flags: #flags, positionals: #positionals, rest: #rest, policy: #policy, tags: #tags,
+            #texts
+            #raw
+        })
+    };
+    let (item, borrow) = cell(&ident("DEF"), &quote! { ::ecmd::Def }, &body);
+    quote! { #item #borrow }
+}
+
+/// The scalar fields of the raw definition
+fn raw_def(cmd: &CommandAttrs, sections: &crate::attrs::DocSections) -> TokenStream {
     let name = &cmd.name;
     let about = &sections.about;
     let short_doc = &cmd.short_doc;
@@ -22,77 +44,55 @@ pub fn gen_meta(
     let help_style = help_style_tokens(cmd);
     let lenient = cmd.lenient;
     let permute = !cmd.no_permute;
-    let flags = gen_flag_metas(cmd, fields);
-    let positionals = gen_positional_metas(fields);
-    let (rest_static, rest) = gen_rest(fields);
-    let tags = gen_tags(cmd);
+    quote! {
+        name: #name,
+        about: #about,
+        short_doc: #short_doc,
+        style: #style,
+        help_style: #help_style,
+        lenient: #lenient,
+        permute: #permute,
+    }
+}
+
+/// The description, extra and exit status cells, and the raw fields that borrow them
+fn gen_texts(
+    cmd: &CommandAttrs,
+    sections: &crate::attrs::DocSections,
+) -> (TokenStream, TokenStream) {
     let extra_lines: &Vec<String> = if cmd.extra_help.is_empty() {
         &sections.extra
     } else {
         &cmd.extra_help
     };
-    let description = texts_static(&quote! { DESCRIPTION }, &sections.description);
-    let extra = texts_static(&quote! { EXTRA }, extra_lines);
-    let exit_status = texts_static(&quote! { EXIT_STATUS }, &sections.exit_status);
-    quote! {
-        #flags
-        #positionals
-        #rest_static
-        #policy
-        #tags
-        #description
-        #extra
-        #exit_status
-        static DEF: ::ecmd::Def = ::ecmd::Def::from_raw(::ecmd::__private::RawDef {
-            name: #name,
-            about: #about,
-            short_doc: #short_doc,
-            style: #style,
-            help_style: #help_style,
-            lenient: #lenient,
-            permute: #permute,
-            flags: &FLAGS,
-            positionals: &POSITIONALS,
-            rest: #rest,
-            policy: &POLICY,
-            tags: &TAGS,
-            description: &DESCRIPTION,
-            extra: &EXTRA,
-            exit_status: &EXIT_STATUS,
-        });
-        &DEF
-    }
+    let (description_item, description) = texts_cell(&ident("DESCRIPTION"), &sections.description);
+    let (extra_item, extra) = texts_cell(&ident("EXTRA"), extra_lines);
+    let (exit_item, exit_status) = texts_cell(&ident("EXIT_STATUS"), &sections.exit_status);
+    let items = quote! { #description_item #extra_item #exit_item };
+    let fields = quote! {
+        description: #description,
+        extra: #extra,
+        exit_status: #exit_status,
+    };
+    (items, fields)
 }
 
-/// A static array of borrowed text lines under `name`
-pub fn texts_static(name: &TokenStream, lines: &[String]) -> TokenStream {
-    let count = lines.len();
-    quote! {
-        static #name: [::std::borrow::Cow<'static, str>; #count] =
-            [#(::std::borrow::Cow::Borrowed(#lines)),*];
-    }
+/// An identifier spelled `name` at the call site
+pub fn ident(name: &str) -> Ident {
+    Ident::new(name, Span::call_site())
 }
 
-/// A static text array for a flag list, or a bare empty slice when there is nothing to hold
-pub fn texts_ref(name: &str, lines: &[String]) -> (TokenStream, TokenStream) {
-    if lines.is_empty() {
-        return (TokenStream::new(), quote! { &[] });
-    }
-    let ident = Ident::new(name, Span::call_site());
-    (texts_static(&quote! { #ident }, lines), quote! { &#ident })
+/// The tags cell and the expression that borrows it
+pub fn gen_tags(cmd: &CommandAttrs) -> (TokenStream, TokenStream) {
+    let tags: Vec<_> = cmd
+        .tags
+        .iter()
+        .map(|(key, value)| quote! { ::ecmd::__private::Tag::new_static(#key, #value) })
+        .collect();
+    array_cell(&ident("TAGS"), &quote! { ::ecmd::__private::Tag }, &tags)
 }
 
-pub fn gen_tags(cmd: &CommandAttrs) -> TokenStream {
-    let count = cmd.tags.len();
-    let keys = cmd.tags.iter().map(|(key, _)| key);
-    let values = cmd.tags.iter().map(|(_, value)| value);
-    quote! {
-        static TAGS: [::ecmd::__private::Tag; #count] =
-            [#(::ecmd::__private::Tag::new_static(#keys, #values)),*];
-    }
-}
-
-/// The rest slot as a static, and the borrow the definition takes of it
+/// The rest slot as a cell, and the borrow the definition takes of it
 pub fn gen_rest(fields: &[ClassifiedField<'_>]) -> (TokenStream, TokenStream) {
     let Some(cf) = fields.iter().find(|cf| matches!(cf.role, FieldRole::Rest)) else {
         return (TokenStream::new(), quote! { None });
@@ -103,8 +103,8 @@ pub fn gen_rest(fields: &[ClassifiedField<'_>]) -> (TokenStream, TokenStream) {
     let default_value = &cf.operand.default_value;
     let hidden = cf.operand.hidden;
     let required = cf.operand.required;
-    let rest = quote! {
-        static REST: ::ecmd::Positional = ::ecmd::Positional::from_raw(::ecmd::__private::RawPositional {
+    let value = quote! {
+        ::ecmd::Positional::from_raw(::ecmd::__private::RawPositional {
             name: #name,
             required: #required,
             desc: #desc,
@@ -112,13 +112,17 @@ pub fn gen_rest(fields: &[ClassifiedField<'_>]) -> (TokenStream, TokenStream) {
             default_value: #default_value,
             hidden: #hidden,
             spread: false,
-        });
+        })
     };
-    (rest, quote! { Some(&REST) })
+    let (item, borrow) = cell(&ident("REST"), &quote! { ::ecmd::Positional }, &value);
+    (item, quote! { Some(#borrow) })
 }
 
-/// The `FLAGS` static and the text statics its entries borrow
-pub fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> TokenStream {
+/// The flags cell with the text cells its entries borrow, and the expression that borrows it
+pub fn gen_flag_metas(
+    cmd: &CommandAttrs,
+    fields: &[ClassifiedField<'_>],
+) -> (TokenStream, TokenStream) {
     let mut statics = Vec::new();
     let mut defs: Vec<_> = fields
         .iter()
@@ -134,11 +138,8 @@ pub fn gen_flag_metas(cmd: &CommandAttrs, fields: &[ClassifiedField<'_>]) -> Tok
             })
         });
     }
-    let count = defs.len();
-    quote! {
-        #(#statics)*
-        static FLAGS: [::ecmd::Flag; #count] = [#(#defs),*];
-    }
+    let (item, borrow) = array_cell(&ident("FLAGS"), &quote! { ::ecmd::Flag }, &defs);
+    (quote! { #(#statics)* #item }, borrow)
 }
 
 /// One `Flag::from_raw` literal for a flag field, its text lists pushed as statics
@@ -186,7 +187,7 @@ pub fn flag_def_literal(
     ];
     let mut refs = Vec::new();
     for (suffix, lines) in &lists {
-        let (text_static, reference) = texts_ref(&format!("FLAG_{index}_{suffix}"), lines);
+        let (text_static, reference) = texts_cell(&ident(&format!("FLAG_{index}_{suffix}")), lines);
         statics.push(text_static);
         refs.push(reference);
     }
@@ -255,7 +256,8 @@ pub fn help_style_tokens(cmd: &CommandAttrs) -> TokenStream {
     }
 }
 
-pub fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
+/// The positionals cell and the expression that borrows it
+pub fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> (TokenStream, TokenStream) {
     let defs: Vec<_> = fields
         .iter()
         .filter_map(|cf| {
@@ -283,6 +285,5 @@ pub fn gen_positional_metas(fields: &[ClassifiedField<'_>]) -> TokenStream {
             })
         })
         .collect();
-    let count = defs.len();
-    quote! { static POSITIONALS: [::ecmd::Positional; #count] = [#(#defs),*]; }
+    array_cell(&ident("POSITIONALS"), &quote! { ::ecmd::Positional }, &defs)
 }
