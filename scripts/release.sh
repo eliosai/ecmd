@@ -36,7 +36,8 @@ bump() {
     old="$(current)"
     old="${old//./\\.}"
     sed -i -E "/^\[workspace\.package\]/,/^\[/ s/^version = \"$old\"/version = \"$version\"/" "$root/Cargo.toml"
-    sed -i -E "s/^(ecmd-derive = \{ version = )\"$old\"/\1\"$version\"/" "$root/Cargo.toml"
+    # ecmd pins ecmd-derive exactly, since the two ship as one release
+    sed -i -E "s/^(ecmd-derive = \{ version = )\"=$old\"/\1\"=$version\"/" "$root/Cargo.toml"
     [ "$(current)" = "$version" ] || { echo "the manifest did not take $version" >&2; exit 1; }
     # only the workspace's own entries move, so no foreign crate re-resolves
     cargo update --manifest-path "$root/Cargo.toml" --workspace --offline
