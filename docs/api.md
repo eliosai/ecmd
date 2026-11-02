@@ -6,8 +6,9 @@ release against the one before it, and a breaking change bumps the major.
 
 ## `Command`
 
-The trait `#[derive(Command)]` implements. `def()` returns the static `Def`, `parse(args)` parses
-one argument slice, and `parse_env()` parses the arguments of the running process.
+The trait `#[derive(Command)]` implements. `def()` returns the static `Def`, `name()` returns the
+command name without building that definition, `parse(args)` parses one argument slice, and
+`parse_env()` parses the arguments of the running process.
 
 ## `Def` and `DefBuilder`
 

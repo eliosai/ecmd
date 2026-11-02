@@ -28,6 +28,12 @@ pub trait Command: Sized {
     /// The static definition of this command
     fn def() -> &'static Def;
 
+    /// The command name, which a derived command answers without building its definition
+    #[must_use]
+    fn name() -> &'static str {
+        Self::def().name()
+    }
+
     /// Parse one argument slice into the command
     fn parse(args: &[&str]) -> Result<Self, Error>;
 
