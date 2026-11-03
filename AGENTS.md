@@ -10,7 +10,8 @@ crate and `crates/derive` is the `ecmd-derive` proc macro it re-exports. Nothing
 - `crates/derive/src` reads the `command`, `flag` and `operand` attributes and emits one
   `Command` impl over a static definition
 - `docs/` explains what the code cannot: `api.md` the public surface, `parsing.md` the scan
-  rules, `derive.md` the attributes, `releasing.md` the pipeline, `todo.md` the open work
+  rules, `derive.md` the attributes, `releasing.md` the pipeline, `todo.md` the open work,
+  `2.0.md` the plan for the next major
 - `scripts/` holds the checks `just` runs, and `.github/workflows` runs the same recipes
 
 ## Commands

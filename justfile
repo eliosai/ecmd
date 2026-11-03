@@ -5,16 +5,37 @@
 default:
     @just --list
 
-# Scan comments, docs and layout, then format-check, type-check and lint every feature set
+# Run every file level check, which is the same set prek runs on a commit and ci runs on a push
+lint:
+    prek run --all-files
+
+# Format check, then compile every feature pair, then lint every target
+# Clippy runs the same front end as `cargo check`, so no plain check pass runs beside it
 check:
-    bash scripts/comment-scan.sh
-    bash scripts/doc-scan.sh
-    bash scripts/layout-scan.sh
     cargo fmt --all -- --check
-    cargo check --workspace --all-targets --all-features
-    cargo check -p ecmd --no-default-features
-    cargo check -p ecmd --no-default-features --features rkyv
+    cargo hack check -p ecmd --feature-powerset --depth 2 --no-dev-deps
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# Compile every feature subset of the library crate, which the paired sweep in `check` bounds at two
+features:
+    cargo hack check -p ecmd --feature-powerset --no-dev-deps
+
+# Ask whether the lower bounds the manifests declare actually resolve and build
+minimal:
+    cargo minimal-versions check --workspace --all-features --direct
+
+# Name every dependency no crate in the workspace reaches
+unused:
+    cargo machete --with-metadata
+
+# Report line coverage over the same run the gate makes, which is a figure to read and never a gate
+coverage:
+    cargo llvm-cov nextest --profile ci --workspace --all-features --lcov --output-path lcov.info
+
+# Name every mutant that no test noticed, bounded to what this branch changed
+mutants base="origin/main":
+    git diff {{base}}... > /tmp/ecmd-mutants.diff
+    cargo mutants --test-tool=nextest --workspace --in-diff /tmp/ecmd-mutants.diff
 
 # Format the workspace
 fmt:
@@ -63,7 +84,7 @@ audit:
 
 # Install the git hooks
 hooks:
-    prek install --hook-type pre-commit --hook-type pre-push
+    prek install --prepare-hooks
 
 # Run the hooks against every file
 hooks-run:
@@ -73,14 +94,17 @@ hooks-run:
 release-plan:
     bash scripts/release.sh --dry-run
 
-# Run everything the gate runs
+# Run everything the pull request gate runs
 ci:
+    just lint
     just check
     just test-ci
     just test-doc
     just doc-check
     just package-check
     just audit
+    just unused
+    just msrv
 
 # Remove every build artifact
 clean:
