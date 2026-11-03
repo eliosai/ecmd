@@ -202,7 +202,7 @@ pub fn gen_required_positional_checks(fields: &[ClassifiedField<'_>]) -> TokenSt
     let mut idx = 0_usize;
 
     for cf in fields {
-        let name = cf.ident.to_string();
+        let name = super::meta::operand_name(cf.ident);
         match &cf.role {
             FieldRole::OptionalPositional => idx = idx.saturating_add(1),
             FieldRole::RequiredPositional => {

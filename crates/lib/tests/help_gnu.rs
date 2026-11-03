@@ -91,3 +91,25 @@ fn gnu_help_omits_claimed_short_actions() {
     assert!(!help.contains("  -h, --help"));
     assert!(!help.contains("  -V, --version\t"));
 }
+
+// Reproduces the first `nohup --help` usage line from GNU coreutils
+#[test]
+fn gnu_usage_names_the_rest_operand() {
+    let def = Def::builder("nohup")
+        .style(Style::Gnu)
+        .positional(Positional::new("command").label("COMMAND").required())
+        .rest(Positional::new("args").label("ARG"))
+        .build();
+
+    assert_eq!(def.usage(), "nohup COMMAND [ARG]...");
+}
+
+#[test]
+fn gnu_usage_omits_a_hidden_rest_operand() {
+    let def = Def::builder("true")
+        .style(Style::Gnu)
+        .rest(Positional::new("ignored").hidden())
+        .build();
+
+    assert_eq!(def.usage(), "true");
+}

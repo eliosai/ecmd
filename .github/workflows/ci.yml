@@ -146,7 +146,7 @@ jobs:
         run: |
           git diff "${BASE_SHA}...${HEAD_SHA}" -- '*.rs' > mutants.diff
           test -s mutants.diff || { echo "no rust changed on this branch"; exit 0; }
-          cargo mutants --test-tool=nextest --workspace --in-diff mutants.diff
+          cargo mutants --test-tool=nextest --workspace --test-workspace=true --in-diff mutants.diff
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

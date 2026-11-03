@@ -143,3 +143,15 @@ fn clap_help_notes_defaults_possible_values_and_aliases() {
         )
     );
 }
+
+// Reproduces clap's usage line for one required variadic argument
+#[test]
+fn clap_usage_angles_a_required_rest_operand() {
+    let def = Def::builder("sum")
+        .style(Style::Gnu)
+        .help_style(HelpStyle::Clap)
+        .rest(Positional::new("files").label("FILE").required())
+        .build();
+
+    assert_eq!(def.usage(), "sum <FILE>...");
+}

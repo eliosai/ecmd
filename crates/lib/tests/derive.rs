@@ -1779,3 +1779,20 @@ impl CommandTrait for HandWritten {
 fn hand_written_command_names_itself_from_its_definition() {
     assert_eq!(HandWritten::name(), "hand-written");
 }
+
+/// Discard the operands.
+#[derive(Command)]
+#[command(name = "colon")]
+struct Colon {
+    _target: String,
+    _args: Operands,
+}
+
+#[test]
+fn operand_names_drop_the_leading_underscore() {
+    assert_eq!(Colon::def().usage(), "colon target [args ...]");
+    assert_eq!(
+        Colon::parse(&[]).err(),
+        Some(ecmd::Error::MissingRequired(vec!["target".to_owned()]))
+    );
+}

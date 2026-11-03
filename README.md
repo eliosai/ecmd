@@ -113,7 +113,7 @@ let ls = Def::builder("ls")
 let scan = ls.scan(&["--all", "-w80", "src", "docs"]).unwrap();
 assert_eq!(scan.flags(), [Parsed::Bool('a'), Parsed::Value('w', "80")]);
 assert_eq!(scan.operands(), ["src", "docs"]);
-assert!(ls.help().starts_with("Usage: ls [-a] [-w COLS] [args...]\n"));
+assert!(ls.help().starts_with("Usage: ls [-a] [-w COLS] [files]...\n"));
 ```
 
 The scanner handles clusters (`-abc`), attached values (`-ofile`, `-o=file`), separated values
