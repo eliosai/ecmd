@@ -1,4 +1,4 @@
-//! Scanning and help rendering for one GNU command
+//! Scanning, help and usage rendering for one GNU command
 
 #![expect(dead_code, reason = "the fixture parses fields it never reads")]
 
@@ -45,4 +45,9 @@ fn read_definition(bencher: Bencher) {
 #[divan::bench]
 fn render_help(bencher: Bencher) {
     bencher.bench(|| black_box(List::def()).help());
+}
+
+#[divan::bench]
+fn render_usage(bencher: Bencher) {
+    bencher.bench(|| black_box(List::def()).usage());
 }
