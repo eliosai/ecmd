@@ -9,6 +9,8 @@ pub enum Style {
     Posix,
     /// POSIX + GNU: `--long` options, `--opt=val`, permutation.
     Gnu,
+    /// POSIX + GNU as clap reads them: an attached short value drops one leading `=`
+    Clap,
 }
 
 /// The help dialect a command renders, independent of its parsing style
@@ -35,6 +37,7 @@ impl HelpStyle {
         match style {
             Style::Posix => Self::Bash,
             Style::Gnu => Self::Gnu,
+            Style::Clap => Self::Clap,
         }
     }
 }
@@ -52,6 +55,7 @@ mod tests {
     fn help_style_defaults_follow_the_parse_style() {
         assert_eq!(HelpStyle::from_parse_style(Style::Posix), HelpStyle::Bash);
         assert_eq!(HelpStyle::from_parse_style(Style::Gnu), HelpStyle::Gnu);
+        assert_eq!(HelpStyle::from_parse_style(Style::Clap), HelpStyle::Clap);
         assert_eq!(HelpStyle::default(), HelpStyle::Bash);
     }
 

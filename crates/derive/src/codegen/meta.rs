@@ -213,14 +213,14 @@ pub fn flag_def_literal(
     })
 }
 
-/// GNU long name for a flag: explicit `long=`, else kebab field name in gnu style, else empty.
+/// GNU long name for a flag: explicit `long=`, else kebab field name in gnu or clap style, else empty.
 pub fn flag_long(cf: &ClassifiedField<'_>, cmd: &CommandAttrs) -> String {
     if let Some(attrs) = flag_attrs(&cf.role)
         && let Some(explicit) = &attrs.long
     {
         return explicit.clone();
     }
-    if cmd.style == "gnu" {
+    if matches!(cmd.style.as_str(), "gnu" | "clap") {
         return kebab(cf.ident);
     }
     String::new()
@@ -231,12 +231,12 @@ pub fn kebab(ident: &Ident) -> String {
     ident.to_string().trim_matches('_').replace('_', "-")
 }
 
-/// The parsing style tokens for this command (Gnu when opted in, else Posix).
+/// The parsing style tokens for this command (Gnu or Clap when opted in, else Posix).
 pub fn style_tokens(cmd: &CommandAttrs) -> TokenStream {
-    if cmd.style == "gnu" {
-        quote! { ::ecmd::Style::Gnu }
-    } else {
-        quote! { ::ecmd::Style::Posix }
+    match cmd.style.as_str() {
+        "gnu" => quote! { ::ecmd::Style::Gnu },
+        "clap" => quote! { ::ecmd::Style::Clap },
+        _ => quote! { ::ecmd::Style::Posix },
     }
 }
 
