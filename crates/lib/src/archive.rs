@@ -77,7 +77,7 @@ macro_rules! coded {
     };
 }
 
-coded!(Style { Posix = 0, Gnu = 1 });
+coded!(Style { Posix = 0, Gnu = 1, Clap = 2 });
 coded!(HelpStyle { Bash = 0, Gnu = 1, Clap = 2, ClapWide = 3, UtilLinux = 4 });
 coded!(FlagKind { Bool = 0, Value = 1, Polar = 2, PolarValue = 3, Noop = 4 });
 coded!(ValueMode {

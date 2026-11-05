@@ -53,7 +53,7 @@ impl<'a> State<'a> {
         let Some(seen) = self.seen.get_mut(position) else {
             return Ok(());
         };
-        if style == Style::Gnu && !flag.is_repeatable() && *seen {
+        if matches!(style, Style::Gnu | Style::Clap) && !flag.is_repeatable() && *seen {
             return Err(Error::RepeatedFlag(spelling.to_string()));
         }
         *seen = true;

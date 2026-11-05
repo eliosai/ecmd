@@ -119,7 +119,7 @@ fn parse_known_cluster<'a>(
 }
 
 /// The action a GNU command reserves for an undeclared `-h` or `-V`
-pub fn implicit_short_action(ch: char, config: &ScanConfig<'_>) -> Option<Error> {
+pub const fn implicit_short_action(ch: char, config: &ScanConfig<'_>) -> Option<Error> {
     if !config.gnu() {
         return None;
     }
