@@ -922,6 +922,15 @@ fn optional_value_accepts_attached_short_and_long_values() {
 }
 
 #[test]
+fn optional_value_keeps_the_equals_of_an_attached_short_value() {
+    let short = OptionalValue::parse(&["-i=VALUE"]).unwrap();
+    assert_eq!(short.legacy.as_deref(), Some("=VALUE"));
+
+    let long = OptionalValue::parse(&["--replace==VALUE"]).unwrap();
+    assert_eq!(long.legacy.as_deref(), Some("=VALUE"));
+}
+
+#[test]
 fn owned_definition_keeps_optional_value_parsing() {
     OptionalValue::def()
         .clone()
@@ -971,6 +980,18 @@ fn optional_next_value_consumes_a_non_option_or_uses_its_default() {
 
     let defaulted = OptionalNextValue::parse(&["-l"]).unwrap();
     assert_eq!(defaulted.lines.as_deref(), Some("1"));
+}
+
+#[test]
+fn attached_short_value_keeps_its_equals_and_long_value_drops_it() {
+    let short = OptionalNextValue::parse(&["-l=5"]).unwrap();
+    assert_eq!(short.lines.as_deref(), Some("=5"));
+
+    let separated = OptionalNextValue::parse(&["-l", "=5"]).unwrap();
+    assert_eq!(separated.lines.as_deref(), Some("=5"));
+
+    let long = OptionalNextValue::parse(&["--lines=5"]).unwrap();
+    assert_eq!(long.lines.as_deref(), Some("5"));
 }
 
 #[derive(Command, Debug)]
