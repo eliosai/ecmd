@@ -87,28 +87,44 @@ fn valued_flag_stuck() {
 }
 
 #[test]
-fn valued_flag_stuck_strips_equals_separator() {
+fn valued_flag_stuck_keeps_equals_sign() {
     let flags = [value_flag('o')];
     let def = scanner(&flags, false, Style::Posix, true);
     let r = def.scan(&["-o=file"]).unwrap();
-    assert_eq!(r.flags(), [Parsed::Value('o', "file")]);
+    assert_eq!(r.flags(), [Parsed::Value('o', "=file")]);
     assert!(r.operands().is_empty());
 }
 
 #[test]
-fn valued_flag_stuck_strips_only_one_equals() {
+fn valued_flag_stuck_keeps_every_equals_sign() {
     let flags = [value_flag('o')];
     let def = scanner(&flags, false, Style::Posix, true);
     let r = def.scan(&["-o==file"]).unwrap();
+    assert_eq!(r.flags(), [Parsed::Value('o', "==file")]);
+}
+
+#[test]
+fn valued_flag_stuck_bare_equals_is_the_value() {
+    let flags = [value_flag('o')];
+    let def = scanner(&flags, false, Style::Posix, true);
+    let r = def.scan(&["-o="]).unwrap();
+    assert_eq!(r.flags(), [Parsed::Value('o', "=")]);
+}
+
+#[test]
+fn valued_flag_separate_keeps_equals_sign() {
+    let flags = [value_flag('o')];
+    let def = scanner(&flags, false, Style::Posix, true);
+    let r = def.scan(&["-o", "=file"]).unwrap();
     assert_eq!(r.flags(), [Parsed::Value('o', "=file")]);
 }
 
 #[test]
-fn valued_flag_stuck_bare_equals_is_empty_value() {
-    let flags = [value_flag('o')];
-    let def = scanner(&flags, false, Style::Posix, true);
-    let r = def.scan(&["-o="]).unwrap();
-    assert_eq!(r.flags(), [Parsed::Value('o', "")]);
+fn bundled_bool_then_valued_keeps_equals_sign() {
+    let flags = [bool_flag('v'), value_flag('o')];
+    let def = scanner(&flags, false, Style::Gnu, true);
+    let r = def.scan(&["-vo=file"]).unwrap();
+    assert_eq!(r.flags(), [Parsed::Bool('v'), Parsed::Value('o', "=file")]);
 }
 
 #[test]
