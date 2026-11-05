@@ -70,5 +70,5 @@ enum may grow.
 
 ## `Style` and `HelpStyle`
 
-`Style` is `Posix` or `Gnu`. `HelpStyle` is `Bash`, `Gnu`, `Clap`, `ClapWide` or `UtilLinux`, and
+`Style` is `Posix`, `Gnu` or `Clap`. `HelpStyle` is `Bash`, `Gnu`, `Clap`, `ClapWide` or `UtilLinux`, and
 `from_parse_style` names the dialect a style implies. Both may grow.

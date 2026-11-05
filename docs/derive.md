@@ -10,11 +10,11 @@ name the shape (`README.md` has the table), and the attributes below refine it.
 | Attribute | Meaning |
 |---|---|
 | `name = "cd"` | the command name, required |
-| `style = "posix"` or `"gnu"` | the argument conventions, `posix` by default |
+| `style = "posix"`, `"gnu"` or `"clap"` | the argument conventions, `posix` by default; `clap` is `gnu` with a short's attached `=` dropped |
 | `help_style = "bash"`, `"gnu"`, `"clap"`, `"clap_wide"` or `"util_linux"` | the help dialect when it differs from the one `style` implies |
 | `lenient` | an unknown flag becomes an operand |
-| `no_permute` | the first operand ends flag scanning under `gnu` |
-| `no_override` | a repeated scalar flag is an error under `gnu` |
+| `no_permute` | the first operand ends flag scanning under `gnu` or `clap` |
+| `no_override` | a repeated scalar flag is an error under `gnu` or `clap` |
 | `no_implicit_version` | `-V` is not reserved for version |
 | `noop = "eE"` | short flags accepted and dropped |
 | `short_doc = "cd [-LP] [dir]"` | the usage line help prints instead of the generated one |
@@ -26,7 +26,7 @@ name the shape (`README.md` has the table), and the attributes below refine it.
 | Attribute | Meaning |
 |---|---|
 | `short = 'v'` | the short character |
-| `long = "verbose"` | the long name; a `gnu` command derives one from the field name when absent |
+| `long = "verbose"` | the long name; a `gnu` or `clap` command derives one from the field name when absent |
 | `alias = "loud"` | another long name help does not list |
 | `visible_alias = "chatty"` | another long name help lists |
 | `value_name = "N"` | the value name help shows, `ARG` by default |

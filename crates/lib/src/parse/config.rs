@@ -38,8 +38,8 @@ impl<'a> ScanConfig<'a> {
         }
     }
 
-    pub fn gnu(&self) -> bool {
-        self.style == Style::Gnu
+    pub const fn gnu(&self) -> bool {
+        matches!(self.style, Style::Gnu | Style::Clap)
     }
 
     /// The position and definition of the flag with this identity
