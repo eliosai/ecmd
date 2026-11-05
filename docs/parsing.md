@@ -7,9 +7,12 @@ holds each one.
 ## Clusters and values
 
 An argument that opens with `-` and is not `--` is a cluster of short flags, so `-abc` is `-a`,
-`-b` and `-c`. A valued flag takes the rest of its cluster as the value (`-ofile`), any leading `=`
-kept as getopt keeps it (`-o=file` is `=file`), or the next argument when nothing is
-attached (`-o file`). A cluster ends at the first valued flag.
+`-b` and `-c`. A valued flag takes the rest of its cluster as the value (`-ofile`) or the next
+argument when nothing is attached (`-o file`). A cluster ends at the first valued flag.
+
+The style decides what an attached `=` means. `Style::Posix` and `Style::Gnu` keep it, as getopt
+does, so `-o=file` is `=file`. `Style::Clap` drops one leading `=`, as clap does, so `-o=file` is
+`file` and `-o==file` is `=file`. A separated `=file` stays whole in every style.
 
 A valued flag refuses to take a declared option as its separated value unless the flag
 `allows_hyphen_values` (the derive default), so `-o --all` reports `MissingValue` for `-o` when
@@ -19,7 +22,7 @@ A valued flag refuses to take a declared option as its separated value unless th
 
 ## GNU long options
 
-Under `Style::Gnu`, `--name` names a long flag, `--name=value` attaches its value, and
+Under `Style::Gnu` and `Style::Clap`, `--name` names a long flag, `--name=value` attaches its value, and
 `--name value` takes the next argument. An unambiguous prefix resolves (`--wid` for `--width`),
 an ambiguous one reports `AmbiguousOption`, and `exact_long` turns prefixes off. A flag answers
 to its long, its aliases and its visible aliases.
@@ -32,7 +35,7 @@ A boolean long flag given `=value` reports `UnexpectedValue`.
 
 ## Order
 
-Under `Style::Posix` the first operand ends flag scanning. Under `Style::Gnu` with `permute`
+Under `Style::Posix` the first operand ends flag scanning. Under `Style::Gnu` or `Style::Clap` with `permute`
 (the default) flags may follow operands, and `permute(false)` restores the POSIX rule for a GNU
 command such as `basename`.
 
@@ -44,7 +47,7 @@ flag, `+x` is an operand.
 
 ## Repeats and conflicts
 
-Under `Style::Gnu` a flag that appeared before reports `RepeatedFlag` unless it is repeatable
+Under `Style::Gnu` and `Style::Clap` a flag that appeared before reports `RepeatedFlag` unless it is repeatable
 (the derive default, off with `no_override` or `Flag::once`). Two flags from different
 `exclusive_flags` groups report `ConflictingFlags` naming both.
 
