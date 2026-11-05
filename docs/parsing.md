@@ -7,9 +7,9 @@ holds each one.
 ## Clusters and values
 
 An argument that opens with `-` and is not `--` is a cluster of short flags, so `-abc` is `-a`,
-`-b` and `-c`. A valued flag takes the rest of its cluster as the value (`-ofile`), one leading
-`=` stripped (`-o=file` is `file`), or the next argument when nothing is attached (`-o file`).
-A cluster ends at the first valued flag.
+`-b` and `-c`. A valued flag takes the rest of its cluster as the value (`-ofile`), any leading `=`
+kept as getopt keeps it (`-o=file` is `=file`), or the next argument when nothing is
+attached (`-o file`). A cluster ends at the first valued flag.
 
 A valued flag refuses to take a declared option as its separated value unless the flag
 `allows_hyphen_values` (the derive default), so `-o --all` reports `MissingValue` for `-o` when

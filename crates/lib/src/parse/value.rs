@@ -54,8 +54,7 @@ fn pick_value<'a>(
             Form::Short { cluster, .. } if policy.requires_separated(ch) => {
                 Err(Error::UnknownFlag(Spelling::Arg(cluster).to_string()))
             }
-            Form::Short { .. } => Ok(value.strip_prefix('=').unwrap_or(value)),
-            Form::Long => Ok(value),
+            Form::Short { .. } | Form::Long => Ok(value),
         };
     }
     match form {
