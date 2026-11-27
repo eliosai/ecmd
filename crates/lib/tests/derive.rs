@@ -879,6 +879,22 @@ fn exact_long_tag_rejects_unambiguous_prefixes() {
     assert_eq!(command.files[0], "x");
 }
 
+/// A command whose one tag is exact long names, so nothing else sets its policy apart.
+#[derive(Command, Debug)]
+#[command(name = "exact-only", style = "gnu", tag(exact_long))]
+struct ExactOnly {
+    #[flag(long = "verbose")]
+    verbose: bool,
+}
+
+#[test]
+fn exact_long_alone_rejects_an_unambiguous_prefix() {
+    assert_eq!(
+        ExactOnly::parse(&["--verb"]).unwrap_err(),
+        ecmd::Error::UnknownFlag("--verb".to_owned())
+    );
+}
+
 #[test]
 fn equals_only_tag_rejects_a_separated_long_value() {
     assert_eq!(
