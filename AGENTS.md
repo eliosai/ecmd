@@ -16,7 +16,7 @@ crate and `crates/derive` is the `ecmd-derive` proc macro it re-exports. Nothing
 
 ## Commands
 
-Every task has a `just` recipe, and the gate runs nothing a recipe does not run. `just check`
+Every task has a `just` recipe. `just check`
 scans comments, docs and layout, format-checks, type-checks every feature set and runs clippy
 with warnings denied. `just test` runs nextest, `just test-doc` the doc examples, `just doc-check`
 the docs.rs build, `just package-check` the crates.io packages, `just semver-check` the public API
@@ -71,10 +71,10 @@ Every public enum is `#[non_exhaustive]`, every public struct keeps its fields p
 
 ## Releases
 
-Every merge to `main` may release. The release workflow reads the commits since the last tag:
-a breaking API change reported by cargo-semver-checks bumps the major, a `feat` the minor, a
-`fix`, `perf` or `refactor` the patch, and anything else ships nothing. A breaking pull request
-carries the `semver-major` label or the semver gate fails it. `docs/releasing.md` has the rest.
+A release is a pull request from `release/vX.Y.Z` which ran `just release X.Y.Z`; its merge
+publishes both crates, tags the version and creates the GitHub release. A breaking API change
+needs a major version, and a breaking pull request carries the `semver-major` label or the semver
+gate fails it. `docs/releasing.md` has the rest.
 
 ## Skills
 
