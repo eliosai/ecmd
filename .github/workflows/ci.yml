@@ -221,7 +221,7 @@ jobs:
 
   # The one required check: every job above that guards the merge passed or had nothing to judge
   gate:
-    needs: [lint, check, test, package, msrv, semver, size, release, deep]
+    needs: [lint, check, test, package, msrv, semver, mutants, size, release, deep]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
