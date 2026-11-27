@@ -1,0 +1,2 @@
+# A standard policy built field by field equals Policy::STANDARD, so this mutant only costs a static
+exclude_re = [ "PolicySpec<'_>::is_standard -> bool with false" ]
