@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # One version names both crates: bumps it, judges a release pull request and plans what main publishes
 # Usage:
-#   scripts/release.sh bump <X.Y.Z>     write the version into the manifest, the lockfile and CHANGELOG.md
-#   scripts/release.sh check <branch>   a release pull request names its version and breaks no API that version may not break
-#   scripts/release.sh plan             version=<X.Y.Z> and commit=<sha that set it> when HEAD carries a version no tag names, else version=
-#   scripts/release.sh notes <X.Y.Z>    the release notes of the version main is about to tag
+#   scripts/release.sh bump <X.Y.Z>           write the version into the manifest, the lockfile and CHANGELOG.md
+#   scripts/release.sh check <branch> <head>  a release pull request names its version and breaks no API that version may not break
+#   scripts/release.sh plan                   version=<X.Y.Z> and commit=<sha that set it> when HEAD carries a version no tag names, else version=
+#   scripts/release.sh notes <X.Y.Z>          the release notes of the version main is about to tag
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -33,22 +33,34 @@ fresh() {
 bump() {
     local version="$1" old
     fresh "$version"
+    # the fetch fills the cache before any manifest moves, so the offline update below only moves the workspace's own entries
+    cargo fetch --manifest-path "$root/Cargo.toml" --locked
     old="$(current)"
     old="${old//./\\.}"
     sed -i -E "/^\[workspace\.package\]/,/^\[/ s/^version = \"$old\"/version = \"$version\"/" "$root/Cargo.toml"
     # ecmd pins ecmd-derive exactly, since the two ship as one release
     sed -i -E "s/^(ecmd-derive = \{ version = )\"=$old\"/\1\"=$version\"/" "$root/Cargo.toml"
     [ "$(current)" = "$version" ] || { echo "the manifest did not take $version" >&2; exit 1; }
-    # only the workspace's own entries move, so no foreign crate re-resolves
+    # the README's dependency line names the major
+    sed -i -E "s/^(ecmd = \")[0-9]+\"/\1${version%%.*}\"/" "$root/README.md"
     cargo update --manifest-path "$root/Cargo.toml" --workspace --offline
     (cd "$root" && git-cliff --tag "v$version" --output CHANGELOG.md)
 }
 
+# the release publishes and tags the commit which set the version, even on a later rerun
+shipped() {
+    local version="$1" commit
+    commit="$(git -C "$root" log -1 --format=%H -G "^version = \"${version//./\\.}\"" -- Cargo.toml)"
+    [ -n "$commit" ] || { echo "no commit sets $version" >&2; exit 1; }
+    echo "$commit"
+}
+
 check() {
-    local branch="$1" version
+    local branch="$1" head="$2" version
     version="$(current)"
     [ "$branch" = "release/v$version" ] || { echo "$branch releases $version: name it release/v$version" >&2; exit 1; }
     fresh "$version"
+    [ "$(shipped "$version")" = "$head" ] || { echo "the release commit is not the head of $branch: keep it last" >&2; exit 1; }
     bash "$root/scripts/semver-check.sh" "$(previous)"
 }
 
@@ -61,9 +73,7 @@ plan() {
     else
         fresh "$version"
         echo "version=$version"
-        # the release publishes and tags the commit which set the version, even on a later rerun
-        commit="$(git -C "$root" log -1 --format=%H -G "^version = \"${version//./\\.}\"" -- Cargo.toml)"
-        [ -n "$commit" ] || { echo "no commit sets $version" >&2; exit 1; }
+        commit="$(shipped "$version")"
         echo "commit=$commit"
     fi
 }
@@ -74,7 +84,7 @@ notes() {
 
 case "${1:-}" in
     bump) [ $# -eq 2 ] || exit 2; bump "$2" ;;
-    check) [ $# -eq 2 ] || exit 2; check "$2" ;;
+    check) [ $# -eq 3 ] || exit 2; check "$2" "$3" ;;
     plan) plan ;;
     notes) [ $# -eq 2 ] || exit 2; notes "$2" ;;
     *) sed -n '2,7p' "${BASH_SOURCE[0]}" >&2; exit 2 ;;
