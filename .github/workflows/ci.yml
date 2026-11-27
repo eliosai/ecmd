@@ -211,7 +211,8 @@ jobs:
       - if: ${{ steps.plan.outputs.version != '' }}
         env:
           HEAD_REF: ${{ github.head_ref }}
-        run: bash scripts/release.sh check "$HEAD_REF"
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/release.sh check "$HEAD_REF" "$HEAD_SHA"
 
   # Miri, the careful build, the minimal versions and the links, before a version ships
   deep:
