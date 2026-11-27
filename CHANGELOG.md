@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.1.0 (2026-11-27)
+
+
+### Features
+- Name a command without building its definition
+- Add a clap parse style
+
+
+### Fixes
+- help: Spell operands the way each dialect does
+- derive: Drop the leading underscore from operands
+- Keep the = of an attached short value
+- deps: Raise the syn, quote and proc-macro2 floors
+
+
+### Performance
+- derive: Build definitions on first call
+- derive: Build derived arrays on the heap
+- derive: Keep derived lists off the heap
+
+
+### Documentation
+- Plan the 2.0 api and its release
+
+
+### Housekeeping
+- Publish through crates.io trusted publishing
+- Compare the API through a git worktree baseline
+- Rebuild the pipeline on canonical workflows and one setup action
+- Gate pull requests and release from a release PR
+- Drop renovate, codeowners and repo rulesets
+- Skip the compile-fail suite under miri
+- Bench scanning and help rendering
+- Pin ecmd-derive to the same release
+- Test mutants against workspace
+- Bench usage rendering
+- Guard the standard policy shortcut
+- Require the mutants check in gate
+- Tighten the release bump and its check
+
 ## 1.0.0 (2026-09-02)
 
 
